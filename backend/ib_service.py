@@ -24,22 +24,66 @@ class IBIntegration:
                 logger.error(f"Could not connect to IBKR: {e}")
                 self.connected = False
 
-    def get_price(self, ticker_symbol):
+    async def get_price(self, ticker_symbol):
         if not self.connected:
             return 0.0
         
         contract = Stock(ticker_symbol, 'SMART', 'USD')
-        # qualify contracts for better accuracy
-        # self.ib.qualifyContracts(contract) 
         
-        # In a real app we might request market data type
+        # Qualify to ensure we have the unique ConId
+        try:
+            await self.ib.qualifyContractsAsync(contract)
+        except Exception as e:
+            print(f"Contract qualification warning: {e}")
+        
+        # Switch to Delayed Frozen Data (Type 4) 
+        self.ib.reqMarketDataType(4) 
+        
+        # reqMktData returns the ticker
         self.ib.reqMktData(contract, '', False, False)
-        
-        # Simply return the latest price (delayed or realtime)
-        # ib_insync updates tickers automatically in background loop
         ticker = self.ib.ticker(contract)
+        
+        # Wait for data (up to 2 seconds)
+        for _ in range(20):
+            if ticker.last or ticker.close or ticker.bid or ticker.ask:
+                break
+            await asyncio.sleep(0.1)
+            
         if ticker:
-            return ticker.marketPrice() or ticker.close
+            # Fallback chain for weekend/closed market data
+            # 1. Market Price (Midpoint/Last if live)
+            price = ticker.marketPrice()
+            
+            # 2. Last Traded Price (if market closed/delayed)
+            if (price != price or price == 0) and ticker.last:
+                price = ticker.last
+                
+            # 3. Close Price (Previous day close)
+            if (price != price or price == 0):
+                price = ticker.close
+                
+            if price == price and price > 0:
+                return price
+
+        # 4. FINAL FALLBACK: Request Historical Data (Last 1 Day)
+        # This is the most reliable way to get 'Friday Close' on a Saturday
+        print(f"DEBUG: Streaming failed. Requesting Historical Data for {ticker_symbol}...")
+        try:
+            bars = await self.ib.reqHistoricalDataAsync(
+                contract,
+                endDateTime='',
+                durationStr='1 D',
+                barSizeSetting='1 day',
+                whatToShow='TRADES',
+                useRTH=True,
+                formatDate=1
+            )
+            if bars:
+                print(f"DEBUG: Historical Data Received: Close={bars[-1].close}")
+                return bars[-1].close
+        except Exception as e:
+            print(f"DEBUG: Historical Data failed: {e}")
+
         return 0.0
 
     async def place_order(self, ticker_symbol, action, quantity):
