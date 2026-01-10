@@ -3,16 +3,22 @@ from pydantic import BaseModel
 from contextlib import asynccontextmanager
 from database import init_db, get_db, Trade
 from sqlalchemy.orm import Session
-from ib_service import ib_service
+from ib_service import ib_service as live_ib_service
+from mock_ib_service import mock_ib_service
 import asyncio
+import os
 import uuid
 from datetime import datetime
 from models import Strategy, StrategyRequest
-from contextlib import asynccontextmanager
-from database import init_db, get_db, Trade
-from sqlalchemy.orm import Session
-from ib_service import ib_service
-import asyncio
+
+# CONFIGURATION
+TRADING_MODE = os.getenv("TRADING_MODE", "live")
+print(f"🚀 STARTING IN {TRADING_MODE.upper()} MODE")
+
+if TRADING_MODE == "simulation":
+    ib_service = mock_ib_service
+else:
+    ib_service = live_ib_service
 
 # In-memory storage for strategies (for now)
 strategies = []
@@ -117,7 +123,7 @@ async def create_strategy(req: StrategyRequest):
         strategies.append(strategy)
     
     # Subscribe to market data
-    await ib_service.subscribe_market_data(req.ticker)
+    await ib_service.subscribe_market_data(req.ticker, req.simulation_date)
     
     return strategy
 
@@ -266,4 +272,4 @@ async def download_history(req: HistoryRequest):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "ib_connected": ib_service.check_connection}
+    return {"status": "ok", "ib_connected": ib_service.check_connection, "mode": TRADING_MODE}

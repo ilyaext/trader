@@ -22,6 +22,10 @@ try:
     
     st.sidebar.markdown(f"**Backend:** :{status_color}[Online]")
     st.sidebar.markdown(f"**IBKR:** :{ib_color}[{ib_status}]")
+    
+    trading_mode = health.get('mode', 'live')
+    if trading_mode == 'simulation':
+        st.sidebar.warning("⚠️ SIMULATION MODE")
 except:
     st.sidebar.markdown("**Backend:** :red[Offline]")
     ib_status = "Unknown"
@@ -148,10 +152,20 @@ with tab3:
                 s_sl = st.number_input("Stop Loss ($)", min_value=0.0, step=0.01, value=0.0)
             with c4:
                 s_qty = st.number_input("Qty", min_value=1, value=10)
+            
+            s_sim_date = None
+            if health.get('mode') == 'simulation':
+                s_sim_date = st.date_input("Simulation Date", value=pd.to_datetime("2026-01-09"))
                 
             if st.form_submit_button("Create Alert"):
                 try:
-                    req_data = {"ticker": s_ticker, "entry_price": s_entry, "stop_loss": s_sl if s_sl > 0 else None, "quantity": s_qty}
+                    req_data = {
+                        "ticker": s_ticker, 
+                        "entry_price": s_entry, 
+                        "stop_loss": s_sl if s_sl > 0 else None, 
+                        "quantity": s_qty,
+                        "simulation_date": str(s_sim_date) if s_sim_date else None
+                    }
                     res = requests.post(f"{ST_BACKEND_URL}/strategies", json=req_data)
                     if res.status_code == 200:
                         st.success(f"Alert set for {s_ticker} > ${s_entry}")
