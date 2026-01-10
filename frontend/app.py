@@ -89,11 +89,15 @@ if st.sidebar.button("Refresh Price"):
 
 # Fetch current price once per render
 try:
-    quote = requests.get(f"{ST_BACKEND_URL}/quote/{ticker}").json()
-    price_val = quote.get('price', 0.0)
-    
-    with price_container:
-        st.metric(label=f"{ticker} Price", value=f"${price_val:.2f}")
+    response = requests.get(f"{ST_BACKEND_URL}/quote/{ticker}")
+    if response.status_code == 200:
+        quote = response.json()
+        price_val = quote.get('price', 0.0)
+        
+        with price_container:
+            st.metric(label=f"{ticker} Price", value=f"${price_val:.2f}")
+    else:
+        price_container.error(f"Backend Error ({response.status_code}): {response.text}")
         
 except Exception as e:
-    price_container.error(f"Price Error: {e}")
+    price_container.error(f"Connection Error: {e}")

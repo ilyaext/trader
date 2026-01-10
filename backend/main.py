@@ -29,8 +29,16 @@ async def get_quote(ticker: str):
     if not ib_service.connected:
         return {"ticker": ticker, "price": 0.0, "status": "disconnected"}
     
-    price = ib_service.get_price(ticker)
-    return {"ticker": ticker, "price": price, "status": "connected"}
+    try:
+        price = ib_service.get_price(ticker)
+        # Handle NaN values explicitly using 0.0 or valid float
+        if price != price: # Check for NaN
+            price = 0.0 
+        return {"ticker": ticker, "price": price, "status": "connected"}
+    except Exception as e:
+        # Return error as JSON instead of crashing
+        print(f"Error fetching quote for {ticker}: {e}")
+        return {"ticker": ticker, "price": 0.0, "status": "error", "error": str(e)}
 
 @app.post("/order")
 async def place_order(order: OrderRequest, db: Session = Depends(get_db)):

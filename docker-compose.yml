@@ -6,12 +6,14 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - IB_HOST=host.docker.internal # Connect to TWS on host by default for local dev
+      - IB_HOST=host.docker.internal # Connect to TWS on host
       - IB_PORT=7497 # Paper trading port
       - POSTGRES_SERVER=db
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=password
       - POSTGRES_DB=trader
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       - db
     dns:
@@ -38,8 +40,8 @@ services:
   db:
     image: postgres:15-alpine
     container_name: trader-db
-    ports:
-      - "5432:5432"
+    # ports:
+    # - "5433:5432" # Removed to avoid ALL port conflicts. Backend connects internally.
     environment:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=password
