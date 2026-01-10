@@ -178,7 +178,7 @@ with tab3:
     st.markdown("---")
 
     # --- 2. Monitored Alerts (Strategies) ---
-    st.subheader("📡 Monitored Alerts (Waiting for Breakout)")
+    st.subheader("📡 Monitored")
     try:
         strat_res = requests.get(f"{ST_BACKEND_URL}/strategies")
         if strat_res.status_code == 200:
@@ -215,7 +215,7 @@ with tab3:
     st.markdown("---")
 
     # --- 3. Active Positions (Purchased) ---
-    st.subheader("💼 Active Positions (Purchased)")
+    st.subheader("💼 Active")
     if st.button("Refresh Positions"):
         st.rerun()
         

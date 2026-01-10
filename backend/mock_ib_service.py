@@ -119,28 +119,17 @@ class MockIBService:
         logger.info(f"MOCK SUBSCRIBE: {ticker_symbol} Date={simulation_date}")
         
         if not simulation_date:
-            logger.warning("MOCK: No simulation date provided for subscription")
-            return
+            raise ValueError("Simulation date is required for Simulation Mode")
 
-        # Find CSV file
-        # Pattern: history/{ticker_symbol}*{simulation_date}*.csv
-        # The stored format is usually history/SPY_2026-01-02_2026-01-04_1min.csv
-        # We need to find a file that CONTAINS the simulation date in its range? 
-        # Or just user provides the file's start/end?
-        # User said: "Bot should find the relevant file"
-        # We'll search for any file containing the ticker and try to load it.
-        # Then filter for the simulation date.
-        
-        search_pattern = f"history/{ticker_symbol}*.csv"
+        # Strict match: ticker_simulationDate_*.csv
+        # Pattern: history/{ticker_symbol}_{simulation_date}_*.csv
+        search_pattern = f"history/{ticker_symbol}_{simulation_date}_*.csv"
         files = glob.glob(search_pattern)
         
         if not files:
-            logger.error(f"MOCK: No history file found for {ticker_symbol}")
-            return
+            raise FileNotFoundError(f"No file found for {ticker_symbol} starting on {simulation_date}")
             
-        # Pick the most recent file or best match?
-        # For now, pick the first one and check if date is inside
-        target_file = files[0] # Simplification
+        target_file = files[0]
         logger.info(f"MOCK: Playing {target_file}")
         
         try:
@@ -150,31 +139,30 @@ class MockIBService:
                  logger.error("MOCK: CSV missing 'date' column")
                  return
                  
-            # Filter for simulation date
-            # We assume 'simulation_date' string format "YYYY-MM-DD" matches or is subset
+            # Filter for simulation date (just in case file contains more, but should be constrained by filename now)
+            # But wait, if filename is SPY_2026-01-02_1min.csv, it starts on Jan 02.
+            # Does it contain ONLY Jan 02? 
+            # The download logic FILTERS by start/end. 
+            # If user downloaded 2026-01-02 to 2026-01-10, name is now SPY_2026-01-02_1min.csv
+            # The file contains multiple days.
+            # User said: "find it only if Create Alert is on SPY 2026/01/02"
+            # If I simulate 2026-01-03, I will search for SPY_2026-01-03... and FAIL.
+            # This is "Correct" per user instruction: "we should find it only if Create Alert is on SPY 2026/01/02"
+            
             df['date'] = pd.to_datetime(df['date'])
             target_dt = pd.to_datetime(simulation_date)
-            
-            # Filter for the specific day
-            day_df = df[df['date'].dt.date == target_dt.date()]
-            
-            if day_df.empty:
-                logger.warning(f"MOCK: No data for {simulation_date} in file")
-                return
-            
-            # Sort by date
-            day_df = day_df.sort_values('date')
             
             # Start Replay Task
             if ticker_symbol in self.active_tasks:
                 self.active_tasks[ticker_symbol].cancel()
                 
             self.active_tasks[ticker_symbol] = asyncio.create_task(
-                self.replay_loop(ticker_symbol, day_df)
+                self.replay_loop(ticker_symbol, df)
             )
             
         except Exception as e:
             logger.error(f"MOCK Error loading file: {e}")
+            raise e
 
     async def replay_loop(self, ticker, df):
         logger.info(f"MOCK: Starting replay for {ticker} ({len(df)} rows)")

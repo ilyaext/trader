@@ -170,7 +170,7 @@ class IBIntegration:
         
         # Save to history folder
         safe_bar = bar_size.replace(" ", "")
-        filename = f"history/{ticker_symbol}_{start_date}_{end_date}_{safe_bar}.csv"
+        filename = f"history/{ticker_symbol}_{start_date}_{safe_bar}.csv"
         df.to_csv(filename, index=False)
         
         return filename

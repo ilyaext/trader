@@ -123,7 +123,14 @@ async def create_strategy(req: StrategyRequest):
         strategies.append(strategy)
     
     # Subscribe to market data
-    await ib_service.subscribe_market_data(req.ticker, req.simulation_date)
+    try:
+        await ib_service.subscribe_market_data(req.ticker, req.simulation_date)
+    except Exception as e:
+        # Rollback: Remove strategy if subscription failed
+        async with strategy_lock:
+            strategies.remove(strategy)
+        print(f"❌ Strategy creation failed: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
     
     return strategy
 
