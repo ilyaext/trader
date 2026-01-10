@@ -175,12 +175,6 @@ async def close_position(ticker: str):
 
 @app.get("/positions")
 async def list_positions():
-    # In a real app we'd ask IBKR for all positions: reqPositions()
-    # For this simple version, we will just iterate over our 'strategies' 
-    # and check if they have a position for their ticker.
-    # OR better: just ask IBKR for the positions of interest?
-    # IBKR's reqPositions() is cleaner but async streaming. 
-    # ib_insync's ib.positions() is cached and easy.
     if not ib_service.check_connection:
         return []
         
@@ -189,14 +183,40 @@ async def list_positions():
     
     for p in ib_positions:
         if p.position != 0:
-            # Get cached price/pnl if available? 
-            # ib_insync portfolio() is better for P&L
-            # But let's stick to simple positions() + current price fetch if needed
-            # For simplicity, we just return the raw position data
+            ticker = p.contract.symbol
+            qty = p.position
+            avg_cost = p.avgCost
+            
+            # Fetch current market price for P&L
+            current_price = await ib_service.get_price(ticker)
+            
+            # Calculate P&L
+            # Unrealized P&L = (Current Price - Avg Cost) * Quantity
+            pnl = (current_price - avg_cost) * qty
+            
+            # P&L %
+            # (Current Price - Avg Cost) / Avg Cost
+            pnl_pct = 0.0
+            if avg_cost > 0:
+                pnl_pct = (current_price - avg_cost) / avg_cost * 100
+            
+            # Timestamp (Simulation only feature mostly, MockIBService stores it)
+            # Default to "Live" for real IBKR (or fetch if complex)
+            purchased_at = None
+            if hasattr(ib_service, 'positions') and isinstance(ib_service.positions, dict):
+                 # This is MockIBService access
+                 pos_details = ib_service.positions.get(ticker)
+                 if pos_details and isinstance(pos_details, dict):
+                     purchased_at = pos_details.get('timestamp')
+            
             positions_data.append({
-                "ticker": p.contract.symbol,
-                "quantity": p.position,
-                "avg_cost": p.avgCost
+                "ticker": ticker,
+                "quantity": qty,
+                "avg_cost": avg_cost,
+                "current_price": current_price,
+                "pnl": pnl,
+                "pnl_percent": pnl_pct,
+                "purchased_at": purchased_at
             })
             
     return positions_data 

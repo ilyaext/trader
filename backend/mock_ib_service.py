@@ -51,9 +51,11 @@ class MockIB:
     def positions(self):
         # Convert dict to list of MockPositions
         pos_list = []
-        for ticker, qty in self.parent.positions.items():
+        for ticker, data in self.parent.positions.items():
+            qty = data['quantity']
+            cost = data['avg_cost']
             if qty != 0:
-                pos_list.append(MockPosition(ticker, qty))
+                pos_list.append(MockPosition(ticker, qty, cost))
         return pos_list
 
 class MockIBService:
@@ -79,13 +81,35 @@ class MockIBService:
     async def place_order(self, ticker_symbol, action, quantity):
         logger.info(f"MOCK ORDER: {action} {quantity} {ticker_symbol}")
         
+        # Get execution price (current simulated price)
+        exec_price = self.last_prices.get(ticker_symbol, 0.0)
+        
         # Update mock position
-        current = self.positions.get(ticker_symbol, 0.0)
+        # Structure: {ticker: {'quantity': float, 'avg_cost': float, 'timestamp': datetime}}
+        current_data = self.positions.get(ticker_symbol, {'quantity': 0, 'avg_cost': 0.0, 'timestamp': None})
+        current_qty = current_data['quantity']
+        
         if action == "BUY":
-            self.positions[ticker_symbol] = current + quantity
-        elif action == "SELL":
-            self.positions[ticker_symbol] = current - quantity
+            # Calculate new average cost
+            total_cost = (current_qty * current_data['avg_cost']) + (quantity * exec_price)
+            new_qty = current_qty + quantity
+            new_avg_cost = total_cost / new_qty if new_qty > 0 else 0.0
             
+            self.positions[ticker_symbol] = {
+                'quantity': new_qty,
+                'avg_cost': new_avg_cost,
+                'timestamp': datetime.now().isoformat() if current_qty == 0 else current_data['timestamp']
+            }
+            
+        elif action == "SELL":
+            new_qty = current_qty - quantity
+            if new_qty <= 0:
+                if ticker_symbol in self.positions:
+                    del self.positions[ticker_symbol]
+            else:
+                current_data['quantity'] = new_qty
+                # Avg cost doesn't change on Sell (FIFO/Weighted Avg rule usually)
+        
         # Return fake trade object
         order = MockOrder()
         order.orderId = hash(datetime.now()) % 100000
@@ -185,7 +209,10 @@ class MockIBService:
         self.price_callbacks.append(callback)
         
     async def get_current_position(self, ticker_symbol):
-        return self.positions.get(ticker_symbol, 0.0)
+        pos_data = self.positions.get(ticker_symbol, 0.0)
+        if isinstance(pos_data, dict):
+            return pos_data.get('quantity', 0.0)
+        return pos_data
         
     async def download_historical_data(self, *args, **kwargs):
         return "MOCK_NO_DOWNLOAD"

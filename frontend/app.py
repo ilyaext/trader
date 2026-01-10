@@ -225,19 +225,34 @@ with tab3:
             positions = pos_res.json()
             if positions:
                 # Table Header
-                p_cols = st.columns([1, 2, 2, 2])
+                p_cols = st.columns([1, 1.5, 1.5, 1.5, 1.5, 1.5, 2])
                 p_cols[0].markdown("**Ticker**")
-                p_cols[1].markdown("**Quantity**")
-                p_cols[2].markdown("**Avg Cost**")
-                p_cols[3].markdown("**Action**") # Close
+                p_cols[1].markdown("**Date**")
+                p_cols[2].markdown("**Qty**")
+                p_cols[3].markdown("**Avg Cost**")
+                p_cols[4].markdown("**Cur Price**")
+                p_cols[5].markdown("**P&L**")
+                p_cols[6].markdown("**Action**") # Close
                 
                 for p in positions:
-                    r_cols = st.columns([1, 2, 2, 2])
+                    r_cols = st.columns([1, 1.5, 1.5, 1.5, 1.5, 1.5, 2])
                     r_cols[0].text(p['ticker'])
-                    r_cols[1].text(p['quantity'])
-                    r_cols[2].text(f"${p['avg_cost']:.2f}")
                     
-                    if r_cols[3].button("💰 Close Position", key=f"close_{p['ticker']}"):
+                    # Date
+                    date_str = pd.to_datetime(p['purchased_at']).strftime('%Y-%m-%d %H:%M') if p.get('purchased_at') else "-"
+                    r_cols[1].text(date_str)
+                    
+                    r_cols[2].text(p['quantity'])
+                    r_cols[3].text(f"${p['avg_cost']:.2f}")
+                    r_cols[4].text(f"${p.get('current_price', 0):.2f}")
+                    
+                    # P&L Styling
+                    pnl = p.get('pnl', 0.0)
+                    pnl_pct = p.get('pnl_percent', 0.0)
+                    color = "green" if pnl >= 0 else "red"
+                    r_cols[5].markdown(f":{color}[${pnl:.2f} ({pnl_pct:.2f}%)]")
+                    
+                    if r_cols[6].button("💰 Close Position", key=f"close_{p['ticker']}"):
                         with st.spinner(f"Closing {p['ticker']}..."):
                             c_res = requests.post(f"{ST_BACKEND_URL}/positions/close", params={"ticker": p['ticker']})
                             if c_res.status_code == 200:
