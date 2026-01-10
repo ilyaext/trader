@@ -94,8 +94,11 @@ try:
         quote = response.json()
         price_val = quote.get('price', 0.0)
         
-        with price_container:
-            st.metric(label=f"{ticker} Price", value=f"${price_val:.2f}")
+        if quote.get('status') == 'connected':
+            with price_container:
+                st.metric(label=f"{ticker} Price", value=f"${price_val:.2f}")
+        else:
+            price_container.warning("IBKR Disconnected - Waiting for reconnect...")
     else:
         price_container.error(f"Backend Error ({response.status_code}): {response.text}")
         

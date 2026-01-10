@@ -10,12 +10,23 @@ import asyncio
 async def lifespan(app: FastAPI):
     # Startup
     init_db()
-    # Attempt connection in background to not block startup
-    asyncio.create_task(ib_service.connect())
+    
+    # Start background connection loop
+    task = asyncio.create_task(check_connection_loop())
+    
     yield
+    
     # Shutdown
+    task.cancel()
     if ib_service.ib.isConnected():
         ib_service.ib.disconnect()
+
+async def check_connection_loop():
+    while True:
+        if not ib_service.check_connection:
+            print("Detected API Disconnect. Attempting to reconnect...")
+            await ib_service.connect()
+        await asyncio.sleep(5) # Check every 5 seconds
 
 app = FastAPI(title="Trader Bot API", lifespan=lifespan)
 
