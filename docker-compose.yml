@@ -8,6 +8,10 @@ services:
     environment:
       - IB_HOST=host.docker.internal # Connect to TWS on host
       - IB_PORT=7497 # Paper trading port
+      # Market Data Type:
+      # 1=Live, 2=Frozen, 3=Delayed, 4=Delayed Frozen
+      # Use 3 or 4 for free/paper accounts without subscriptions.
+      - IB_MARKET_DATA_TYPE=4
       - POSTGRES_SERVER=db
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=password

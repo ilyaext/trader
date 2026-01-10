@@ -12,6 +12,13 @@ class IBIntegration:
         self.port = int(os.getenv("IB_PORT", "7497"))
         self.client_id = 1
         self.connected = False
+        
+        # Market Data Type Configuration
+        # 1 = Live (Real-time, requires subscription)
+        # 2 = Frozen (Last price recorded at market close, requires subscription)
+        # 3 = Delayed (15-20 min delayed, free)
+        # 4 = Delayed Frozen (Last price recorded at market close, free)
+        self.market_data_type = int(os.getenv("IB_MARKET_DATA_TYPE", "4"))
 
     async def connect(self):
         if not self.ib.isConnected():
@@ -36,8 +43,8 @@ class IBIntegration:
         except Exception as e:
             print(f"Contract qualification warning: {e}")
         
-        # Switch to Delayed Frozen Data (Type 4) 
-        self.ib.reqMarketDataType(4) 
+        # Switch to configured Market Data Type
+        self.ib.reqMarketDataType(self.market_data_type) 
         
         # reqMktData returns the ticker
         self.ib.reqMktData(contract, '', False, False)
