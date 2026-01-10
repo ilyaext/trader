@@ -65,6 +65,7 @@ class MockIBService:
         self.price_callbacks = []
         self.positions = {} # {ticker: quantity}
         self.last_prices = {} # {ticker: price}
+        self.closing_prices = {} # {ticker: closing_price_of_file}
         self.active_tasks = {} # {ticker: asyncio.Task}
 
     async def connect(self):
@@ -153,6 +154,14 @@ class MockIBService:
             df['date'] = pd.to_datetime(df['date'])
             target_dt = pd.to_datetime(simulation_date)
             
+            # Store closing price for Portfolio P&L
+            # Store closing price for Portfolio P&L
+            if not df.empty:
+                self.closing_prices[ticker_symbol] = df.iloc[-1]['close']
+                
+            # Ensure Sorted
+            df = df.sort_values('date')
+
             # Start Replay Task
             if ticker_symbol in self.active_tasks:
                 self.active_tasks[ticker_symbol].cancel()
@@ -165,15 +174,23 @@ class MockIBService:
             logger.error(f"MOCK Error loading file: {e}")
             raise e
 
+    async def get_portfolio_price(self, ticker_symbol):
+        """Returns the End-of-File price for P&L calculations in Simulation Mode"""
+        return self.closing_prices.get(ticker_symbol, self.last_prices.get(ticker_symbol, 0.0))
+
     async def replay_loop(self, ticker, df):
         logger.info(f"MOCK: Starting replay for {ticker} ({len(df)} rows)")
         
         for _, row in df.iterrows():
             price = row['close']
+            sim_time = row['date']
+            
+            # print(f"MOCK REPLAY: {sim_time} @ {price}") # Optional: detailed log
             self.last_prices[ticker] = price
             
             # Create Mock Ticker
             mt = MockTicker(ticker, price)
+            mt.time = sim_time # Attach time for debug if needed
             
             # Emit Event
             for cb in self.price_callbacks:
@@ -182,9 +199,8 @@ class MockIBService:
                 else:
                     cb(mt)
             
-            # Simulate time delay (speed up?)
-            # 100ms per candle looks cool
-            await asyncio.sleep(0.1) 
+            # Simulate time delay (Faster: 0.02s)
+            await asyncio.sleep(0.01) 
             
         logger.info(f"MOCK: Replay finished for {ticker}")
 

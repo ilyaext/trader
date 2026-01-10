@@ -46,27 +46,57 @@ async def on_price_update(ticker):
         if price <= 0:
             return
 
+        # DEBUG: Trace ticks
+        # print(f"DEBUG: Tick {ticker.contract.symbol} @ {price} | Active Strategies: {len(active_strategies)}")
+
         for strategy in active_strategies:
-            # Check Breakout Condition
-            if price >= strategy.entry_price:
-                print(f"🚀 BREAKOUT TRIGGERED: {strategy.ticker} @ {price} (Entry: {strategy.entry_price})")
-                
-                try:
-                    # 1. Place Buy Order
-                    trade = await ib_service.place_order(strategy.ticker, "BUY", strategy.quantity)
+            print(f"DEBUG: {strategy.ticker} Price={price} Entry={strategy.entry_price} LastSeen={strategy.last_seen_price}")
+            # Check Breakout Condition (2-Candle Confirmation)
+            # Rule: Two sequential candles must be above Entry.
+            #       Current Close > Previous Close > Entry Price
+            
+            # Default: Reset sequence if price drops below entry
+            if price <= strategy.entry_price:
+                if strategy.last_seen_price is not None:
+                     print(f"📉 Reset Sequence: {strategy.ticker} {price} <= {strategy.entry_price}")
+                strategy.last_seen_price = None
+                continue
+            
+            # Price > Entry. Check sequence.
+            if strategy.last_seen_price is not None:
+                # We have a previous candle above entry.
+                # Check if current is higher than previous (momentum confirmation)
+                if price > strategy.last_seen_price:
+                    print(f"🚀 BREAKOUT TRIGGERED: {strategy.ticker} @ {price} > {strategy.last_seen_price} > {strategy.entry_price}")
                     
-                    # 2. (Optional) Place Stop Loss
-                    # if strategy.stop_loss:
-                    #    ... implement bracket order later ...
-                    
-                    # 3. Mark Executed
-                    strategy.status = "executed"
-                    
-                    # 4. Cleanup subscription if no other strategies for this ticker
-                    # (Simplified: just keep subscribed for now to see P&L)
-                    
-                except Exception as e:
-                    print(f"❌ Failed to execute strategy {strategy.id}: {e}")
+                    try:
+                        # 1. Place Buy Order
+                        trade = await ib_service.place_order(strategy.ticker, "BUY", strategy.quantity)
+                        
+                        # 2. (Optional) Place Stop Loss
+                        # if strategy.stop_loss:
+                        #    ... implement bracket order later ...
+                        
+                        # 3. Mark Executed
+                        strategy.status = "executed"
+                        
+                        # 4. Cleanup subscription if no other strategies for this ticker
+                        # (Simplified: just keep subscribed for now to see P&L)
+                        
+                    except Exception as e:
+                        print(f"❌ Failed to execute strategy {strategy.id}: {e}")
+                else:
+                    # Price is above entry, but not higher than previous.
+                    # Update tracking to this candle? 
+                    # User said: "second is closed larger then previous"
+                    # If C2 <= C1, the sequence C1->C2 fails.
+                    # Does C2 become the new "first" candle? Yes, it's > Entry.
+                    print(f"DEBUG: Sequence Stalled: {price} <= {strategy.last_seen_price} (New Base)")
+                    strategy.last_seen_price = price
+            else:
+                # First candle above entry
+                print(f"DEBUG: Potential Breakout Start: {price} > {strategy.entry_price}")
+                strategy.last_seen_price = price
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -195,7 +225,11 @@ async def list_positions():
             avg_cost = p.avgCost
             
             # Fetch current market price for P&L
-            current_price = await ib_service.get_price(ticker)
+            # In Simulation Mode, use get_portfolio_price() for End-of-Day view
+            if hasattr(ib_service, 'get_portfolio_price'):
+                current_price = await ib_service.get_portfolio_price(ticker)
+            else:
+                current_price = await ib_service.get_price(ticker)
             
             # Calculate P&L
             # Unrealized P&L = (Current Price - Avg Cost) * Quantity

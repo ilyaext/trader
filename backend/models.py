@@ -18,3 +18,4 @@ class Strategy(BaseModel):
     status: str = "active" # active, executed, cancelled
     created_at: str
     simulation_date: Optional[str] = None
+    last_seen_price: Optional[float] = None # For tracking sequential candles
