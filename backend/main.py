@@ -26,7 +26,7 @@ class OrderRequest(BaseModel):
 
 @app.get("/quote/{ticker}")
 async def get_quote(ticker: str):
-    if not ib_service.connected:
+    if not ib_service.check_connection:
         return {"ticker": ticker, "price": 0.0, "status": "disconnected"}
     
     try:
@@ -42,7 +42,7 @@ async def get_quote(ticker: str):
 
 @app.post("/order")
 async def place_order(order: OrderRequest, db: Session = Depends(get_db)):
-    if not ib_service.connected:
+    if not ib_service.check_connection:
         raise HTTPException(status_code=503, detail="IBKR Disconnected")
     
     try:
@@ -72,4 +72,4 @@ async def get_trades(db: Session = Depends(get_db)):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "ib_connected": ib_service.connected}
+    return {"status": "ok", "ib_connected": ib_service.check_connection}

@@ -11,7 +11,7 @@ class IBIntegration:
         self.host = os.getenv("IB_HOST", "127.0.0.1")
         self.port = int(os.getenv("IB_PORT", "7497"))
         self.client_id = 1
-        self.connected = False
+        self.client_id = 1
         
         # Market Data Type Configuration
         # 1 = Live (Real-time, requires subscription)
@@ -25,14 +25,16 @@ class IBIntegration:
             try:
                 # wait slightly before connecting to ensure gateway is up in docker
                 await self.ib.connectAsync(self.host, self.port, clientId=self.client_id)
-                self.connected = True
                 logger.info("Connected to IBKR")
             except Exception as e:
                 logger.error(f"Could not connect to IBKR: {e}")
-                self.connected = False
+                
+    @property
+    def check_connection(self):
+        return self.ib.isConnected()
 
     async def get_price(self, ticker_symbol):
-        if not self.connected:
+        if not self.check_connection:
             return 0.0
         
         contract = Stock(ticker_symbol, 'SMART', 'USD')
@@ -94,7 +96,7 @@ class IBIntegration:
         return 0.0
 
     async def place_order(self, ticker_symbol, action, quantity):
-        if not self.connected:
+        if not self.check_connection:
             raise Exception("IBKR not connected")
 
         contract = Stock(ticker_symbol, 'SMART', 'USD')
