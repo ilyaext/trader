@@ -1,0 +1,51 @@
+services:
+  # Trading Agent Backend (FastAPI)
+  backend:
+    build: ./backend
+    container_name: trader-backend
+    ports:
+      - "8000:8000"
+    environment:
+      - IB_HOST=host.docker.internal # Connect to TWS on host by default for local dev
+      - IB_PORT=7497 # Paper trading port
+      - POSTGRES_SERVER=db
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=trader
+    depends_on:
+      - db
+    dns:
+      - 8.8.8.8 # Often needed for IBKR connection stability
+    # Mount code for hot reloading
+    volumes:
+      - ./backend:/app
+
+  # User Interface (Streamlit)
+  frontend:
+    build: ./frontend
+    container_name: trader-frontend
+    ports:
+      - "8501:8501"
+    environment:
+      - BACKEND_URL=http://backend:8000
+    depends_on:
+      - backend
+    # Mount code for hot reloading
+    volumes:
+      - ./frontend:/app
+
+  # Database (PostgreSQL)
+  db:
+    image: postgres:15-alpine
+    container_name: trader-db
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=trader
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:
