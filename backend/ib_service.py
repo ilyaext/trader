@@ -114,7 +114,7 @@ class IBIntegration:
         # In prod we would await trade.filledEvent
         return trade
 
-    async def download_historical_data(self, ticker_symbol, start_date, end_date):
+    async def download_historical_data(self, ticker_symbol, start_date, end_date, bar_size="1 day"):
         if not self.check_connection:
             raise Exception("IBKR not connected")
             
@@ -124,20 +124,22 @@ class IBIntegration:
         # IBKR requires endDateTime in format 'YYYYMMDD HH:mm:ss'
         # We assume end of day for the end_date
         end_dt = datetime.strptime(end_date, "%Y-%m-%d")
+        # Ensure we cover the full end day by requesting up to 23:59:59
         end_str = end_dt.strftime("%Y%m%d 23:59:59")
         
         # Calculate duration
         start_dt = datetime.strptime(start_date, "%Y-%m-%d")
         delta = end_dt - start_dt
-        duration_str = f"{delta.days + 1} D"
+        duration_days = delta.days + 1
+        duration_str = f"{duration_days} D"
         
-        print(f"DEBUG: Requesting History for {ticker_symbol}: End={end_str}, Duration={duration_str}")
+        print(f"DEBUG: Requesting History for {ticker_symbol}: End={end_str}, Duration={duration_str}, Bar={bar_size}")
         
         bars = await self.ib.reqHistoricalDataAsync(
             contract,
             endDateTime=end_str,
             durationStr=duration_str,
-            barSizeSetting='1 day',
+            barSizeSetting=bar_size,
             whatToShow='TRADES',
             useRTH=True,
             formatDate=1
@@ -149,8 +151,26 @@ class IBIntegration:
         # Convert to DataFrame
         df = util.df(bars)
         
+        # 🛡️ FILTER LOGIC: Ensure data strictly within requested range
+        # Make sure 'date' column is datetime
+        df['date'] = pd.to_datetime(df['date'])
+        
+        # ⚠️ FIX: Strip timezone if present to compare with naive start_dt/end_dt
+        # dictating that we want "Exchange Wall Time" vs "User Wall Time"
+        if hasattr(df['date'].dt, 'tz') and df['date'].dt.tz is not None:
+             df['date'] = df['date'].dt.tz_localize(None)
+        
+        # Filter (Start at 00:00:00 of start_date, End at 23:59:59 of end_date)
+        filter_end_dt = end_dt.replace(hour=23, minute=59, second=59)
+        
+        df = df[(df['date'] >= start_dt) & (df['date'] <= filter_end_dt)]
+        
+        # Select only requested columns
+        df = df[['date', 'close', 'volume']]
+        
         # Save to history folder
-        filename = f"history/{ticker_symbol}_{start_date}_{end_date}.csv"
+        safe_bar = bar_size.replace(" ", "")
+        filename = f"history/{ticker_symbol}_{start_date}_{end_date}_{safe_bar}.csv"
         df.to_csv(filename, index=False)
         
         return filename

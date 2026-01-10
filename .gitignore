@@ -58,3 +58,6 @@ Thumbs.db
 secrets.json
 *.pem
 *.key
+
+# Data
+history/

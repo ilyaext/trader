@@ -251,6 +251,7 @@ class HistoryRequest(BaseModel):
     ticker: str
     start_date: str
     end_date: str
+    bar_size: str = "1 day"
 
 @app.post("/history/download")
 async def download_history(req: HistoryRequest):
@@ -258,7 +259,7 @@ async def download_history(req: HistoryRequest):
         raise HTTPException(status_code=503, detail="IBKR Disconnected")
     
     try:
-        filename = await ib_service.download_historical_data(req.ticker, req.start_date, req.end_date)
+        filename = await ib_service.download_historical_data(req.ticker, req.start_date, req.end_date, req.bar_size)
         return {"status": "ok", "file": filename}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

@@ -101,12 +101,16 @@ with tab1:
 with tab2:
     st.subheader("Download Historical Data")
     
-    h_col1, h_col2 = st.columns(2)
+    h_col1, h_col2, h_col3 = st.columns(3)
     with h_col1:
-        start_date = st.date_input("Start Date", value=pd.to_datetime("today") - pd.Timedelta(days=7))
+        start_date = st.date_input("Start Date", value=pd.to_datetime("today") - pd.Timedelta(days=7), key="h_start")
     with h_col2:
-        end_date = st.date_input("End Date", value=pd.to_datetime("today"))
+        end_date = st.date_input("End Date", value=pd.to_datetime("today"), key="h_end")
+    with h_col3:
+        bar_size = st.selectbox("Bar Size", ["1 min", "5 mins", "1 hour", "1 day"], index=0, key="h_bar")
         
+    st.caption(f"Requesting: {start_date} to {end_date} ({bar_size})")
+    
     if st.button("Download Data", type="primary"):
         if ib_status != "Connected":
             st.error("Cannot download: IBKR Disconnected")
@@ -115,9 +119,10 @@ with tab2:
                 payload = {
                     "ticker": ticker,
                     "start_date": str(start_date),
-                    "end_date": str(end_date)
+                    "end_date": str(end_date),
+                    "bar_size": bar_size
                 }
-                with st.spinner("Downloading data from IBKR..."):
+                with st.spinner(f"Downloading {bar_size} data from IBKR..."):
                     res = requests.post(f"{ST_BACKEND_URL}/history/download", json=payload)
                     
                 if res.status_code == 200:
