@@ -127,7 +127,8 @@ class MockIBService:
         files = glob.glob(search_pattern)
         
         if not files:
-            raise FileNotFoundError(f"No file found for {ticker_symbol} starting on {simulation_date}")
+            abs_pattern = os.path.abspath(search_pattern)
+            raise FileNotFoundError(f"File not found. Searched for: {abs_pattern}")
             
         target_file = files[0]
         logger.info(f"MOCK: Playing {target_file}")
