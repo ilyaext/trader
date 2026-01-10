@@ -1,4 +1,6 @@
 from ib_insync import *
+from datetime import datetime
+import pandas as pd
 import asyncio
 import os
 import logging
@@ -107,5 +109,46 @@ class IBIntegration:
         # Wait for fill? For Hello World, we just return the trade object
         # In prod we would await trade.filledEvent
         return trade
+
+    async def download_historical_data(self, ticker_symbol, start_date, end_date):
+        if not self.check_connection:
+            raise Exception("IBKR not connected")
+            
+        contract = Stock(ticker_symbol, 'SMART', 'USD')
+        await self.ib.qualifyContractsAsync(contract)
+        
+        # IBKR requires endDateTime in format 'YYYYMMDD HH:mm:ss'
+        # We assume end of day for the end_date
+        end_dt = datetime.strptime(end_date, "%Y-%m-%d")
+        end_str = end_dt.strftime("%Y%m%d 23:59:59")
+        
+        # Calculate duration
+        start_dt = datetime.strptime(start_date, "%Y-%m-%d")
+        delta = end_dt - start_dt
+        duration_str = f"{delta.days + 1} D"
+        
+        print(f"DEBUG: Requesting History for {ticker_symbol}: End={end_str}, Duration={duration_str}")
+        
+        bars = await self.ib.reqHistoricalDataAsync(
+            contract,
+            endDateTime=end_str,
+            durationStr=duration_str,
+            barSizeSetting='1 day',
+            whatToShow='TRADES',
+            useRTH=True,
+            formatDate=1
+        )
+        
+        if not bars:
+            raise Exception("No data returned from IBKR")
+            
+        # Convert to DataFrame
+        df = util.df(bars)
+        
+        # Save to history folder
+        filename = f"history/{ticker_symbol}_{start_date}_{end_date}.csv"
+        df.to_csv(filename, index=False)
+        
+        return filename
 
 ib_service = IBIntegration()

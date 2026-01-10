@@ -25,6 +25,7 @@ services:
     # Mount code for hot reloading
     volumes:
       - ./backend:/app
+      - ./history:/app/history
 
   # User Interface (Streamlit)
   frontend:

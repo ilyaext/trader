@@ -81,6 +81,22 @@ async def get_trades(db: Session = Depends(get_db)):
     trades = db.query(Trade).order_by(Trade.timestamp.desc()).limit(10).all()
     return trades
 
+class HistoryRequest(BaseModel):
+    ticker: str
+    start_date: str
+    end_date: str
+
+@app.post("/history/download")
+async def download_history(req: HistoryRequest):
+    if not ib_service.check_connection:
+        raise HTTPException(status_code=503, detail="IBKR Disconnected")
+    
+    try:
+        filename = await ib_service.download_historical_data(req.ticker, req.start_date, req.end_date)
+        return {"status": "ok", "file": filename}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/health")
 async def health():
     return {"status": "ok", "ib_connected": ib_service.check_connection}
