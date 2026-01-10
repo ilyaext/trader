@@ -21,6 +21,10 @@ class IBIntegration:
         # 3 = Delayed (15-20 min delayed, free)
         # 4 = Delayed Frozen (Last price recorded at market close, free)
         self.market_data_type = int(os.getenv("IB_MARKET_DATA_TYPE", "4"))
+        
+        # Event Callbacks
+        self.price_callbacks = []
+        self.ib.pendingTickersEvent += self.on_pending_tickers
 
     async def connect(self):
         if not self.ib.isConnected():
@@ -150,5 +154,48 @@ class IBIntegration:
         df.to_csv(filename, index=False)
         
         return filename
+
+    def on_pending_tickers(self, tickers):
+        """Event handler for real-time price updates"""
+        for ticker in tickers:
+            for callback in self.price_callbacks:
+                try:
+                    # Run callback safely
+                    asyncio.create_task(callback(ticker))
+                except Exception as e:
+                    logger.error(f"Error in price callback: {e}")
+
+    async def subscribe_market_data(self, ticker_symbol):
+        if not self.check_connection:
+            return
+            
+        contract = Stock(ticker_symbol, 'SMART', 'USD')
+        await self.ib.qualifyContractsAsync(contract)
+        
+        self.ib.reqMarketDataType(self.market_data_type)
+        self.ib.reqMktData(contract, '', False, False)
+        logger.info(f"Subscribed to {ticker_symbol}")
+
+    def cancel_market_data(self, ticker_symbol):
+        # Find the ticker object
+        for t in self.ib.tickers():
+            if t.contract.symbol == ticker_symbol:
+                self.ib.cancelMktData(t.contract)
+                logger.info(f"Unsubscribed from {ticker_symbol}")
+                return
+
+    async def get_current_position(self, ticker_symbol):
+        if not self.check_connection:
+            return 0.0
+            
+        positions = self.ib.positions()
+        for p in positions:
+            if p.contract.symbol == ticker_symbol:
+                return p.position
+                
+        return 0.0
+
+    def register_callback(self, callback):
+        self.price_callbacks.append(callback)
 
 ib_service = IBIntegration()

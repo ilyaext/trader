@@ -5,11 +5,73 @@ from database import init_db, get_db, Trade
 from sqlalchemy.orm import Session
 from ib_service import ib_service
 import asyncio
+import uuid
+from datetime import datetime
+from models import Strategy, StrategyRequest
+from contextlib import asynccontextmanager
+from database import init_db, get_db, Trade
+from sqlalchemy.orm import Session
+from ib_service import ib_service
+import asyncio
+
+# In-memory storage for strategies (for now)
+strategies = []
+strategy_lock = None # Will be initialized in lifespan
+
+async def on_price_update(ticker):
+    """Callback triggered by ib_service when price updates"""
+    if strategy_lock is None: 
+        return
+        
+    async with strategy_lock:
+        # Filter active strategies for this ticker
+        active_strategies = [s for s in strategies if s.ticker == ticker.contract.symbol and s.status == "active"]
+        
+        if not active_strategies:
+            return
+
+        # Get current price
+        price = 0.0
+        if ticker.last and not float(ticker.last) != float(ticker.last): # Check NaN
+             price = ticker.last
+        elif ticker.marketPrice():
+             price = ticker.marketPrice()
+        
+        if price <= 0:
+            return
+
+        for strategy in active_strategies:
+            # Check Breakout Condition
+            if price >= strategy.entry_price:
+                print(f"🚀 BREAKOUT TRIGGERED: {strategy.ticker} @ {price} (Entry: {strategy.entry_price})")
+                
+                try:
+                    # 1. Place Buy Order
+                    trade = await ib_service.place_order(strategy.ticker, "BUY", strategy.quantity)
+                    
+                    # 2. (Optional) Place Stop Loss
+                    # if strategy.stop_loss:
+                    #    ... implement bracket order later ...
+                    
+                    # 3. Mark Executed
+                    strategy.status = "executed"
+                    
+                    # 4. Cleanup subscription if no other strategies for this ticker
+                    # (Simplified: just keep subscribed for now to see P&L)
+                    
+                except Exception as e:
+                    print(f"❌ Failed to execute strategy {strategy.id}: {e}")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
+    global strategy_lock
+    strategy_lock = asyncio.Lock()
+    
     init_db()
+    
+    # Register Protocol Callback
+    ib_service.register_callback(on_price_update)
     
     # Start background connection loop
     task = asyncio.create_task(check_connection_loop())
@@ -26,14 +88,118 @@ async def check_connection_loop():
         if not ib_service.check_connection:
             print("Detected API Disconnect. Attempting to reconnect...")
             await ib_service.connect()
+            
+            # Re-subscribe to active strategies
+            async with strategy_lock:
+                for s in strategies:
+                    if s.status == "active":
+                        await ib_service.subscribe_market_data(s.ticker)
+                        
         await asyncio.sleep(5) # Check every 5 seconds
 
 app = FastAPI(title="Trader Bot API", lifespan=lifespan)
+
+# --- Strategy Endpoints ---
+
+@app.post("/strategies")
+async def create_strategy(req: StrategyRequest):
+    id = str(uuid.uuid4())
+    strategy = Strategy(
+        id=id,
+        ticker=req.ticker,
+        entry_price=req.entry_price,
+        stop_loss=req.stop_loss,
+        quantity=req.quantity,
+        created_at=datetime.now().isoformat()
+    )
+    
+    async with strategy_lock:
+        strategies.append(strategy)
+    
+    # Subscribe to market data
+    await ib_service.subscribe_market_data(req.ticker)
+    
+    return strategy
+
+@app.get("/strategies")
+async def list_strategies():
+    return strategies
+
+@app.delete("/strategies/{strategy_id}")
+async def delete_strategy(strategy_id: str):
+    async with strategy_lock:
+        for i, s in enumerate(strategies):
+            if s.id == strategy_id:
+                # Unsubscribe if it was active
+                if s.status == "active":
+                    ib_service.cancel_market_data(s.ticker)
+                
+                del strategies[i]
+                return {"status": "deleted", "id": strategy_id}
+    
+    raise HTTPException(status_code=404, detail="Strategy not found")
+
+@app.post("/positions/close")
+async def close_position(ticker: str):
+    if not ib_service.check_connection:
+        raise HTTPException(status_code=503, detail="IBKR Disconnected")
+
+    try:
+        # Get current position size
+        pos = await ib_service.get_current_position(ticker)
+        if pos == 0:
+             return {"status": "no_position", "message": "No position to close"}
+        
+        # Determine action
+        action = "SELL" if pos > 0 else "BUY"
+        quantity = abs(pos)
+        
+        # Place Market Order to close
+        trade = await ib_service.place_order(ticker, action, quantity)
+        
+        # Update any local strategy status if needed? 
+        # For now, just return success
+        return {
+            "status": "submitted", 
+            "ib_id": trade.order.orderId, 
+            "description": f"Closing position: {action} {quantity} {ticker}"
+        }
+    except Exception as e:
+         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/positions")
+async def list_positions():
+    # In a real app we'd ask IBKR for all positions: reqPositions()
+    # For this simple version, we will just iterate over our 'strategies' 
+    # and check if they have a position for their ticker.
+    # OR better: just ask IBKR for the positions of interest?
+    # IBKR's reqPositions() is cleaner but async streaming. 
+    # ib_insync's ib.positions() is cached and easy.
+    if not ib_service.check_connection:
+        return []
+        
+    positions_data = []
+    ib_positions = ib_service.ib.positions()
+    
+    for p in ib_positions:
+        if p.position != 0:
+            # Get cached price/pnl if available? 
+            # ib_insync portfolio() is better for P&L
+            # But let's stick to simple positions() + current price fetch if needed
+            # For simplicity, we just return the raw position data
+            positions_data.append({
+                "ticker": p.contract.symbol,
+                "quantity": p.position,
+                "avg_cost": p.avgCost
+            })
+            
+    return positions_data 
 
 class OrderRequest(BaseModel):
     ticker: str
     action: str = "BUY"
     quantity: int = 1
+
 
 @app.get("/quote/{ticker}")
 async def get_quote(ticker: str):

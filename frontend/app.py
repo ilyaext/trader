@@ -30,7 +30,7 @@ st.sidebar.markdown("---")
 ticker = st.sidebar.text_input("Ticker Symbol", value="SPY").upper()
 
 # --- Main Content ---
-tab1, tab2 = st.tabs(["Trading", "Historical Data"])
+tab1, tab2, tab3 = st.tabs(["Trading", "Historical Data", "Strategy Agent"])
 
 with tab1:
     col1, col2 = st.columns([2, 1])
@@ -127,6 +127,109 @@ with tab2:
                     st.error(f"Failed: {res.text}")
             except Exception as e:
                 st.error(f"Error: {e}")
+
+with tab3:
+    st.subheader("Breakout Strategy Manager")
+    
+    # --- 1. Create Strategy Form ---
+    with st.expander("➕ Add New Strategy", expanded=True):
+        with st.form("strategy_form"):
+            c1, c2, c3, c4 = st.columns(4)
+            with c1:
+                s_ticker = st.text_input("Ticker", "SPY").upper()
+            with c2:
+                s_entry = st.number_input("Entry Price ($)", min_value=0.0, step=0.01)
+            with c3:
+                s_sl = st.number_input("Stop Loss ($)", min_value=0.0, step=0.01, value=0.0)
+            with c4:
+                s_qty = st.number_input("Qty", min_value=1, value=10)
+                
+            if st.form_submit_button("Create Alert"):
+                try:
+                    req_data = {"ticker": s_ticker, "entry_price": s_entry, "stop_loss": s_sl if s_sl > 0 else None, "quantity": s_qty}
+                    res = requests.post(f"{ST_BACKEND_URL}/strategies", json=req_data)
+                    if res.status_code == 200:
+                        st.success(f"Alert set for {s_ticker} > ${s_entry}")
+                        st.rerun()
+                    else:
+                        st.error(f"Error: {res.text}")
+                except Exception as e:
+                    st.error(f"Req Error: {e}")
+
+    st.markdown("---")
+
+    # --- 2. Monitored Alerts (Strategies) ---
+    st.subheader("📡 Monitored Alerts (Waiting for Breakout)")
+    try:
+        strat_res = requests.get(f"{ST_BACKEND_URL}/strategies")
+        if strat_res.status_code == 200:
+            strategies = strat_res.json()
+            active_strats = [s for s in strategies if s.get('status') == 'active']
+            
+            if active_strats:
+                # Display as a table with "Delete" buttons
+                # Using columns for layout
+                st.markdown(f"**active: {len(active_strats)}**")
+                
+                header_cols = st.columns([1, 2, 2, 2, 1])
+                header_cols[0].markdown("**Ticker**")
+                header_cols[1].markdown("**Entry**")
+                header_cols[2].markdown("**Stop Loss**")
+                header_cols[3].markdown("**Qty**")
+                header_cols[4].markdown("**Action**")
+                
+                for s in active_strats:
+                    cols = st.columns([1, 2, 2, 2, 1])
+                    cols[0].text(s['ticker'])
+                    cols[1].text(f"${s['entry_price']}")
+                    cols[2].text(f"${s['stop_loss']}" if s['stop_loss'] else "-")
+                    cols[3].text(s['quantity'])
+                    
+                    if cols[4].button("❌", key=f"del_{s['id']}"):
+                        requests.delete(f"{ST_BACKEND_URL}/strategies/{s['id']}")
+                        st.rerun()
+            else:
+                st.info("No active alerts.")
+    except Exception as e:
+        st.error(f"Could not load strategies: {e}")
+
+    st.markdown("---")
+
+    # --- 3. Active Positions (Purchased) ---
+    st.subheader("💼 Active Positions (Purchased)")
+    if st.button("Refresh Positions"):
+        st.rerun()
+        
+    try:
+        pos_res = requests.get(f"{ST_BACKEND_URL}/positions")
+        if pos_res.status_code == 200:
+            positions = pos_res.json()
+            if positions:
+                # Table Header
+                p_cols = st.columns([1, 2, 2, 2])
+                p_cols[0].markdown("**Ticker**")
+                p_cols[1].markdown("**Quantity**")
+                p_cols[2].markdown("**Avg Cost**")
+                p_cols[3].markdown("**Action**") # Close
+                
+                for p in positions:
+                    r_cols = st.columns([1, 2, 2, 2])
+                    r_cols[0].text(p['ticker'])
+                    r_cols[1].text(p['quantity'])
+                    r_cols[2].text(f"${p['avg_cost']:.2f}")
+                    
+                    if r_cols[3].button("💰 Close Position", key=f"close_{p['ticker']}"):
+                        with st.spinner(f"Closing {p['ticker']}..."):
+                            c_res = requests.post(f"{ST_BACKEND_URL}/positions/close", params={"ticker": p['ticker']})
+                            if c_res.status_code == 200:
+                                st.success(f"Closed {p['ticker']}!")
+                                st.rerun()
+                            else:
+                                st.error(f"Failed: {c_res.text}")
+            else:
+                st.info("No open positions.")
+    except Exception as e:
+        st.error(f"Could not load positions: {e}")
             
 # --- Live Loop (Manual Refresh fallback) ---
 if st.sidebar.button("Refresh Price"):
