@@ -18,3 +18,5 @@ class Strategy(BaseModel):
     status: str = "active" # active, executed, cancelled
     created_at: str
     last_seen_price: Optional[float] = None # For tracking sequential candles
+    current_price: Optional[float] = None
+    last_updated: Optional[str] = None

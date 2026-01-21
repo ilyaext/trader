@@ -153,6 +153,7 @@ with tab3:
                 s_qty = st.number_input("Qty", min_value=1, value=10)
             
             if st.form_submit_button("Create Alert"):
+                should_rerun = False
                 try:
                     req_data = {
                         "ticker": s_ticker, 
@@ -163,48 +164,80 @@ with tab3:
                     res = requests.post(f"{ST_BACKEND_URL}/strategies", json=req_data)
                     if res.status_code == 200:
                         st.success(f"Alert set for {s_ticker} > ${s_entry}")
-                        st.rerun()
+                        should_rerun = True
                     else:
                         st.error(f"Error: {res.text}")
                 except Exception as e:
                     st.error(f"Req Error: {e}")
+                
+                if should_rerun:
+                    st.rerun()
 
     st.markdown("---")
 
     # --- 2. Monitored Alerts (Strategies) ---
     st.subheader("📡 Monitored")
-    try:
-        strat_res = requests.get(f"{ST_BACKEND_URL}/strategies")
-        if strat_res.status_code == 200:
-            strategies = strat_res.json()
-            active_strats = [s for s in strategies if s.get('status') == 'active']
-            
-            if active_strats:
-                # Display as a table with "Delete" buttons
-                # Using columns for layout
-                st.markdown(f"**active: {len(active_strats)}**")
-                
-                header_cols = st.columns([1, 2, 2, 2, 1])
-                header_cols[0].markdown("**Ticker**")
-                header_cols[1].markdown("**Entry**")
-                header_cols[2].markdown("**Stop Loss**")
-                header_cols[3].markdown("**Qty**")
-                header_cols[4].markdown("**Action**")
-                
-                for s in active_strats:
-                    cols = st.columns([1, 2, 2, 2, 1])
-                    cols[0].text(s['ticker'])
-                    cols[1].text(f"${s['entry_price']}")
-                    cols[2].text(f"${s['stop_loss']}" if s['stop_loss'] else "-")
-                    cols[3].text(s['quantity'])
-                    
-                    if cols[4].button("❌", key=f"del_{s['id']}"):
-                        requests.delete(f"{ST_BACKEND_URL}/strategies/{s['id']}")
-                        st.rerun()
+
+    @st.fragment(run_every=5)
+    def render_monitored_strategies():
+        strategies = []
+        error_msg = None
+        
+        # 1. Fetch Data
+        try:
+            strat_res = requests.get(f"{ST_BACKEND_URL}/strategies")
+            if strat_res.status_code == 200:
+                strategies = strat_res.json()
             else:
-                st.info("No active alerts.")
-    except Exception as e:
-        st.error(f"Could not load strategies: {e}")
+                error_msg = f"Error fetching strategies: {strat_res.text}"
+        except Exception as e:
+             error_msg = f"Could not load strategies: {e}"
+        
+        # 2. Render Error if any
+        if error_msg:
+             st.error(error_msg)
+             return
+
+        # 3. Render UI
+        active_strats = [s for s in strategies if s.get('status') == 'active']
+        
+        if active_strats:
+            # Display as a table with "Delete" buttons
+            # Using columns for layout
+            st.markdown(f"**active: {len(active_strats)}**")
+            
+            header_cols = st.columns([1, 1, 1, 2, 2, 2, 1]) # Added specific column for Last Update
+            header_cols[0].markdown("**Ticker**")
+            header_cols[1].markdown("**Price**")
+            header_cols[2].markdown("**Last Update**")
+            header_cols[3].markdown("**Entry**")
+            header_cols[4].markdown("**Stop Loss**")
+            header_cols[5].markdown("**Qty**")
+            header_cols[6].markdown("**Action**")
+            
+            for s in active_strats:
+                cols = st.columns([1, 1, 1, 2, 2, 2, 1])
+                cols[0].text(s['ticker'])
+                
+                # Display Current Price
+                c_price = s.get('current_price')
+                cols[1].text(f"${c_price:.2f}" if c_price else "-")
+
+                # Display Last Update
+                l_updated = s.get('last_updated')
+                cols[2].text(f"{l_updated}" if l_updated else "-")
+                
+                cols[3].text(f"${s['entry_price']}")
+                cols[4].text(f"${s['stop_loss']}" if s['stop_loss'] else "-")
+                cols[5].text(s['quantity'])
+                
+                if cols[6].button("❌", key=f"del_{s['id']}"):
+                    requests.delete(f"{ST_BACKEND_URL}/strategies/{s['id']}")
+                    st.rerun()
+        else:
+            st.info("No active alerts.")
+
+    render_monitored_strategies()
 
     st.markdown("---")
 

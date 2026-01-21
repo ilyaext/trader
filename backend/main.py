@@ -48,6 +48,8 @@ async def on_price_update(ticker):
         # print(f"DEBUG: Tick {ticker.contract.symbol} @ {price} | Active Strategies: {len(active_strategies)}")
 
         for strategy in active_strategies:
+            strategy.current_price = price
+            strategy.last_updated = datetime.now().strftime("%H:%M:%S")
             print(f"DEBUG: {strategy.ticker} Price={price} Entry={strategy.entry_price} LastSeen={strategy.last_seen_price}")
             # Check Breakout Condition (2-Candle Confirmation)
             # Rule: Two sequential candles must be above Entry.
