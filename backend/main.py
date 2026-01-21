@@ -50,53 +50,7 @@ async def on_price_update(ticker):
         for strategy in active_strategies:
             strategy.current_price = price
             strategy.last_updated = datetime.now().strftime("%H:%M:%S")
-            print(f"DEBUG: {strategy.ticker} Price={price} Entry={strategy.entry_price} LastSeen={strategy.last_seen_price}")
-            # Check Breakout Condition (2-Candle Confirmation)
-            # Rule: Two sequential candles must be above Entry.
-            #       Current Close > Previous Close > Entry Price
-            
-            # Default: Reset sequence if price drops below entry
-            if price <= strategy.entry_price:
-                if strategy.last_seen_price is not None:
-                     print(f"📉 Reset Sequence: {strategy.ticker} {price} <= {strategy.entry_price}")
-                strategy.last_seen_price = None
-                continue
-            
-            # Price > Entry. Check sequence.
-            if strategy.last_seen_price is not None:
-                # We have a previous candle above entry.
-                # Check if current is higher than previous (momentum confirmation)
-                if price > strategy.last_seen_price:
-                    print(f"🚀 BREAKOUT TRIGGERED: {strategy.ticker} @ {price} > {strategy.last_seen_price} > {strategy.entry_price}")
-                    
-                    try:
-                        # 1. Place Buy Order
-                        trade = await ib_service.place_order(strategy.ticker, "BUY", strategy.quantity)
-                        
-                        # 2. (Optional) Place Stop Loss
-                        # if strategy.stop_loss:
-                        #    ... implement bracket order later ...
-                        
-                        # 3. Mark Executed
-                        strategy.status = "executed"
-                        
-                        # 4. Cleanup subscription if no other strategies for this ticker
-                        # (Simplified: just keep subscribed for now to see P&L)
-                        
-                    except Exception as e:
-                        print(f"❌ Failed to execute strategy {strategy.id}: {e}")
-                else:
-                    # Price is above entry, but not higher than previous.
-                    # Update tracking to this candle? 
-                    # User said: "second is closed larger then previous"
-                    # If C2 <= C1, the sequence C1->C2 fails.
-                    # Does C2 become the new "first" candle? Yes, it's > Entry.
-                    print(f"DEBUG: Sequence Stalled: {price} <= {strategy.last_seen_price} (New Base)")
-                    strategy.last_seen_price = price
-            else:
-                # First candle above entry
-                print(f"DEBUG: Potential Breakout Start: {price} > {strategy.entry_price}")
-                strategy.last_seen_price = price
+            # print(f"DEBUG: {strategy.ticker} Price={price} Entry={strategy.entry_price}")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
