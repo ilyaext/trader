@@ -197,6 +197,9 @@ class IBIntegration:
         contract = Stock(ticker_symbol, 'SMART', 'USD')
         await self.ib.qualifyContractsAsync(contract)
         
+        if contract.conId == 0:
+            raise ValueError(f"Invalid Ticker: {ticker_symbol}")
+        
         self.ib.reqMarketDataType(self.market_data_type)
         self.ib.reqMktData(contract, '', False, False)
         logger.info(f"Subscribed to {ticker_symbol}")
