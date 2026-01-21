@@ -9,7 +9,7 @@ import asyncio
 import os
 import uuid
 from datetime import datetime
-from models import Strategy, StrategyRequest
+from models import Strategy, StrategyRequest, StrategyUpdate
 
 # CONFIGURATION
 # CONFIGURATION
@@ -48,8 +48,9 @@ async def on_price_update(ticker):
         # print(f"DEBUG: Tick {ticker.contract.symbol} @ {price} | Active Strategies: {len(active_strategies)}")
 
         for strategy in active_strategies:
-            strategy.current_price = price
-            strategy.last_updated = datetime.now().strftime("%H:%M:%S")
+            if strategy.is_live:
+                strategy.current_price = price
+                strategy.last_updated = datetime.now().strftime("%H:%M:%S")
             # print(f"DEBUG: {strategy.ticker} Price={price} Entry={strategy.entry_price}")
 
 @asynccontextmanager
@@ -95,6 +96,7 @@ app = FastAPI(title="Trader Bot API", lifespan=lifespan)
 async def create_strategy(req: StrategyRequest):
     # Sanitize ticker
     # Sanitize ticker
+    # Sanitize ticker
     clean_ticker = req.ticker.strip().upper()
     
     async with strategy_lock:
@@ -102,6 +104,7 @@ async def create_strategy(req: StrategyRequest):
         for s in strategies:
             if s.ticker == clean_ticker and s.status == "active":
                 raise HTTPException(status_code=400, detail=f"Active strategy already exists for {clean_ticker}")
+    
 
     id = str(uuid.uuid4())
     strategy = Strategy(
@@ -127,6 +130,44 @@ async def create_strategy(req: StrategyRequest):
         raise HTTPException(status_code=400, detail=str(e))
     
     return strategy
+
+@app.patch("/strategies/{strategy_id}")
+async def update_strategy(strategy_id: str, update: StrategyUpdate):
+    async with strategy_lock:
+        for s in strategies:
+            if s.id == strategy_id:
+                if update.is_live is not None:
+                    s.is_live = update.is_live
+                    # If switching to live, re-subscribe? 
+                    # Assuming subscription is persistent or handled, or checking connection loop will handle it.
+                    # Current impl subscribes on creation. If we never unsubscribed, we are good.
+                    # If we unsubscribed? We don't have unsub logic except on delete.
+                
+                if update.current_price is not None:
+                    s.current_price = update.current_price
+                    s.last_updated = datetime.now().strftime("%H:%M:%S")
+                
+                return s
+    
+    raise HTTPException(status_code=404, detail="Strategy not found")
+    
+    return strategy
+
+@app.patch("/strategies/{strategy_id}")
+async def update_strategy(strategy_id: str, update: StrategyUpdate):
+    async with strategy_lock:
+        for s in strategies:
+            if s.id == strategy_id:
+                if update.is_live is not None:
+                    s.is_live = update.is_live
+                    
+                if update.current_price is not None:
+                    s.current_price = update.current_price
+                    s.last_updated = datetime.now().strftime("%H:%M:%S")
+                
+                return s
+    
+    raise HTTPException(status_code=404, detail="Strategy not found")
 
 @app.get("/strategies")
 async def list_strategies():

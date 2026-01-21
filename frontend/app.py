@@ -206,36 +206,72 @@ with tab3:
             # Using columns for layout
             st.markdown(f"**active: {len(active_strats)}**")
             
-            header_cols = st.columns([1, 1, 1, 2, 2, 2, 1]) # Added specific column for Last Update
+            header_cols = st.columns([1, 0.5, 1.5, 1, 1, 1, 1, 0.5]) 
             header_cols[0].markdown("**Ticker**")
-            header_cols[1].markdown("**Price**")
-            header_cols[2].markdown("**Last Update**")
-            header_cols[3].markdown("**Entry**")
-            header_cols[4].markdown("**Stop Loss**")
-            header_cols[5].markdown("**Qty**")
-            header_cols[6].markdown("**Action**")
+            header_cols[1].markdown("**Live**")
+            header_cols[2].markdown("**Price**")
+            header_cols[3].markdown("**Last Update**")
+            header_cols[4].markdown("**Entry**")
+            header_cols[5].markdown("**Stop Loss**")
+            header_cols[6].markdown("**Qty**")
+            header_cols[7].markdown("**Action**")
             
             for s in active_strats:
-                cols = st.columns([1, 1, 1, 2, 2, 2, 1])
+                cols = st.columns([1, 0.5, 1.5, 1, 1, 1, 1, 0.5])
                 cols[0].text(s['ticker'])
                 
-                # Display Current Price
-                c_price = s.get('current_price')
-                cols[1].text(f"${c_price:.2f}" if c_price else "-")
+                # Live Toggle
+                is_live = s.get('is_live', True)
+                new_live = cols[1].checkbox(" ", value=is_live, key=f"live_{s['id']}", label_visibility="collapsed")
+                if new_live != is_live:
+                    requests.patch(f"{ST_BACKEND_URL}/strategies/{s['id']}", json={"is_live": new_live})
+                    st.rerun()
+
+                # Display Price (Read-Only in Table)
+                c_price = s.get('current_price', 0.0) or 0.0
+                cols[2].text(f"${c_price:.2f}")
 
                 # Display Last Update
                 l_updated = s.get('last_updated')
-                cols[2].text(f"{l_updated}" if l_updated else "-")
+                cols[3].text(f"{l_updated}" if l_updated else "-")
                 
-                cols[3].text(f"${s['entry_price']}")
-                cols[4].text(f"${s['stop_loss']}" if s['stop_loss'] else "-")
-                cols[5].text(s['quantity'])
+                cols[4].text(f"${s['entry_price']}")
+                cols[5].text(f"${s['stop_loss']}" if s['stop_loss'] else "-")
+                cols[6].text(s['quantity'])
                 
-                if cols[6].button("❌", key=f"del_{s['id']}"):
+                if cols[7].button("❌", key=f"del_{s['id']}"):
                     requests.delete(f"{ST_BACKEND_URL}/strategies/{s['id']}")
                     st.rerun()
+            
+            # --- Manual Price Injection Section ---
+            manual_strats = [s for s in active_strats if not s.get('is_live', True)]
+            if manual_strats:
+                st.markdown("### 🛠️ Manual Price Injection")
+                with st.form("manual_price_form"):
+                    c1, c2, c3 = st.columns([2, 2, 1])
+                    
+                    # Create dictionary for selectbox {label: id}
+                    # We use Ticker for label, but update by ID
+                    strat_options = {s['ticker']: s['id'] for s in manual_strats}
+                    
+                    with c1:
+                        target_ticker = st.selectbox("Select Strategy", options=list(strat_options.keys()))
+                    
+                    selected_id = strat_options.get(target_ticker)
+                    
+                    # Try to pre-fill current price if possible (Streamlit forms make dynamic defaults hard, default to 0.0)
+                    with c2:
+                         new_manual_price = st.number_input("New Price ($)", min_value=0.0, step=0.01)
+                    
+                    with c3:
+                        st.markdown("<br>", unsafe_allow_html=True) # Spacer for alignment
+                        if st.form_submit_button("Update Price"):
+                            if selected_id:
+                                requests.patch(f"{ST_BACKEND_URL}/strategies/{selected_id}", json={"current_price": new_manual_price})
+                                st.rerun()
         else:
             st.info("No active alerts.")
+
 
     render_monitored_strategies()
 
