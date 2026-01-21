@@ -23,9 +23,6 @@ try:
     st.sidebar.markdown(f"**Backend:** :{status_color}[Online]")
     st.sidebar.markdown(f"**IBKR:** :{ib_color}[{ib_status}]")
     
-    trading_mode = health.get('mode', 'live')
-    if trading_mode == 'simulation':
-        st.sidebar.warning("⚠️ SIMULATION MODE")
 except:
     st.sidebar.markdown("**Backend:** :red[Offline]")
     ib_status = "Unknown"
@@ -153,10 +150,6 @@ with tab3:
             with c4:
                 s_qty = st.number_input("Qty", min_value=1, value=10)
             
-            s_sim_date = None
-            if health.get('mode') == 'simulation':
-                s_sim_date = st.date_input("Simulation Date", value=pd.to_datetime("2026-01-09"))
-                
             if st.form_submit_button("Create Alert"):
                 try:
                     req_data = {
@@ -164,7 +157,6 @@ with tab3:
                         "entry_price": s_entry, 
                         "stop_loss": s_sl if s_sl > 0 else None, 
                         "quantity": s_qty,
-                        "simulation_date": str(s_sim_date) if s_sim_date else None
                     }
                     res = requests.post(f"{ST_BACKEND_URL}/strategies", json=req_data)
                     if res.status_code == 200:
@@ -214,57 +206,7 @@ with tab3:
 
     st.markdown("---")
 
-    # --- 3. Active Positions (Purchased) ---
-    st.subheader("💼 Active")
-    if st.button("Refresh Positions"):
-        st.rerun()
-        
-    try:
-        pos_res = requests.get(f"{ST_BACKEND_URL}/positions")
-        if pos_res.status_code == 200:
-            positions = pos_res.json()
-            if positions:
-                # Table Header
-                p_cols = st.columns([1, 1.5, 1.5, 1.5, 1.5, 1.5, 2])
-                p_cols[0].markdown("**Ticker**")
-                p_cols[1].markdown("**Date**")
-                p_cols[2].markdown("**Qty**")
-                p_cols[3].markdown("**Avg Cost**")
-                p_cols[4].markdown("**Cur Price**")
-                p_cols[5].markdown("**P&L**")
-                p_cols[6].markdown("**Action**") # Close
-                
-                for p in positions:
-                    r_cols = st.columns([1, 1.5, 1.5, 1.5, 1.5, 1.5, 2])
-                    r_cols[0].text(p['ticker'])
-                    
-                    # Date
-                    date_str = pd.to_datetime(p['purchased_at']).strftime('%Y-%m-%d %H:%M') if p.get('purchased_at') else "-"
-                    r_cols[1].text(date_str)
-                    
-                    r_cols[2].text(p['quantity'])
-                    r_cols[3].text(f"${p['avg_cost']:.2f}")
-                    r_cols[4].text(f"${p.get('current_price', 0):.2f}")
-                    
-                    # P&L Styling
-                    pnl = p.get('pnl', 0.0)
-                    pnl_pct = p.get('pnl_percent', 0.0)
-                    color = "green" if pnl >= 0 else "red"
-                    r_cols[5].markdown(f":{color}[${pnl:.2f} ({pnl_pct:.2f}%)]")
-                    
-                    if r_cols[6].button("💰 Close Position", key=f"close_{p['ticker']}"):
-                        with st.spinner(f"Closing {p['ticker']}..."):
-                            c_res = requests.post(f"{ST_BACKEND_URL}/positions/close", params={"ticker": p['ticker']})
-                            if c_res.status_code == 200:
-                                st.success(f"Closed {p['ticker']}!")
-                                st.rerun()
-                            else:
-                                st.error(f"Failed: {c_res.text}")
-            else:
-                st.info("No open positions.")
-    except Exception as e:
-        st.error(f"Could not load positions: {e}")
-            
+
 # --- Live Loop (Manual Refresh fallback) ---
 if st.sidebar.button("Refresh Price"):
     st.rerun()

@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from database import init_db, get_db, Trade
 from sqlalchemy.orm import Session
 from ib_service import ib_service as live_ib_service
-from mock_ib_service import mock_ib_service
+# from mock_ib_service import mock_ib_service
 import asyncio
 import os
 import uuid
@@ -12,13 +12,11 @@ from datetime import datetime
 from models import Strategy, StrategyRequest
 
 # CONFIGURATION
-TRADING_MODE = os.getenv("TRADING_MODE", "live")
-print(f"🚀 STARTING IN {TRADING_MODE.upper()} MODE")
+# CONFIGURATION
+# TRADING_MODE = os.getenv("TRADING_MODE", "live")
+# print(f"🚀 STARTING IN LIVE MODE")
 
-if TRADING_MODE == "simulation":
-    ib_service = mock_ib_service
-else:
-    ib_service = live_ib_service
+ib_service = live_ib_service
 
 # In-memory storage for strategies (for now)
 strategies = []
@@ -139,10 +137,20 @@ app = FastAPI(title="Trader Bot API", lifespan=lifespan)
 
 @app.post("/strategies")
 async def create_strategy(req: StrategyRequest):
+    # Sanitize ticker
+    # Sanitize ticker
+    clean_ticker = req.ticker.strip().upper()
+    
+    async with strategy_lock:
+        # Check for duplicates
+        for s in strategies:
+            if s.ticker == clean_ticker and s.status == "active":
+                raise HTTPException(status_code=400, detail=f"Active strategy already exists for {clean_ticker}")
+
     id = str(uuid.uuid4())
     strategy = Strategy(
         id=id,
-        ticker=req.ticker,
+        ticker=clean_ticker,
         entry_price=req.entry_price,
         stop_loss=req.stop_loss,
         quantity=req.quantity,
@@ -154,7 +162,7 @@ async def create_strategy(req: StrategyRequest):
     
     # Subscribe to market data
     try:
-        await ib_service.subscribe_market_data(req.ticker, req.simulation_date)
+        await ib_service.subscribe_market_data(clean_ticker)
     except Exception as e:
         # Rollback: Remove strategy if subscription failed
         async with strategy_lock:
@@ -226,11 +234,10 @@ async def list_positions():
             
             # Fetch current market price for P&L
             # In Simulation Mode, use get_portfolio_price() for End-of-Day view
-            if hasattr(ib_service, 'get_portfolio_price'):
-                current_price = await ib_service.get_portfolio_price(ticker)
-            else:
-                current_price = await ib_service.get_price(ticker)
+            # Fetch current market price for P&L
+            current_price = await ib_service.get_price(ticker)
             
+            # Calculate P&L
             # Calculate P&L
             # Unrealized P&L = (Current Price - Avg Cost) * Quantity
             pnl = (current_price - avg_cost) * qty
@@ -241,14 +248,9 @@ async def list_positions():
             if avg_cost > 0:
                 pnl_pct = (current_price - avg_cost) / avg_cost * 100
             
-            # Timestamp (Simulation only feature mostly, MockIBService stores it)
-            # Default to "Live" for real IBKR (or fetch if complex)
+            # Timestamp 
             purchased_at = None
-            if hasattr(ib_service, 'positions') and isinstance(ib_service.positions, dict):
-                 # This is MockIBService access
-                 pos_details = ib_service.positions.get(ticker)
-                 if pos_details and isinstance(pos_details, dict):
-                     purchased_at = pos_details.get('timestamp')
+            # TODO: Fetch real execution time if needed
             
             positions_data.append({
                 "ticker": ticker,
@@ -333,4 +335,4 @@ async def download_history(req: HistoryRequest):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "ib_connected": ib_service.check_connection, "mode": TRADING_MODE}
+    return {"status": "ok", "ib_connected": ib_service.check_connection}

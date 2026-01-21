@@ -7,7 +7,7 @@ class StrategyRequest(BaseModel):
     entry_price: float
     stop_loss: Optional[float] = None
     quantity: int = 1
-    simulation_date: Optional[str] = None # For Simulation Mode
+    quantity: int = 1
 
 class Strategy(BaseModel):
     id: str
@@ -17,5 +17,4 @@ class Strategy(BaseModel):
     quantity: int
     status: str = "active" # active, executed, cancelled
     created_at: str
-    simulation_date: Optional[str] = None
     last_seen_price: Optional[float] = None # For tracking sequential candles

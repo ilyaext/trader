@@ -13,7 +13,7 @@ services:
       # Use 3 or 4 for free/paper accounts without subscriptions.
       - IB_MARKET_DATA_TYPE=4
       # TRADING_MODE: live or simulation
-      - TRADING_MODE=simulation
+
       - POSTGRES_SERVER=db
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=password

@@ -185,7 +185,7 @@ class IBIntegration:
                 except Exception as e:
                     logger.error(f"Error in price callback: {e}")
 
-    async def subscribe_market_data(self, ticker_symbol, simulation_date=None):
+    async def subscribe_market_data(self, ticker_symbol):
         if not self.check_connection:
             return
             
