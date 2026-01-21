@@ -28,7 +28,7 @@ except:
     ib_status = "Unknown"
 
 st.sidebar.markdown("---")
-ticker = st.sidebar.text_input("Ticker Symbol", value="SPY").upper()
+ticker = st.sidebar.text_input("Ticker Symbol", value="SPY").strip().upper()
 
 # --- Main Content ---
 tab1, tab2, tab3 = st.tabs(["Trading", "Historical Data", "Strategy Agent"])
@@ -142,7 +142,7 @@ with tab3:
         with st.form("strategy_form"):
             c1, c2, c3, c4 = st.columns(4)
             with c1:
-                s_ticker = st.text_input("Ticker", "SPY").upper()
+                s_ticker = st.text_input("Ticker", "SPY").strip().upper()
             with c2:
                 s_entry = st.number_input("Entry Price ($)", min_value=0.0, step=0.01)
             with c3:
