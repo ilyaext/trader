@@ -158,9 +158,6 @@ class MockIBService:
             # Store closing price for Portfolio P&L
             if not df.empty:
                 self.closing_prices[ticker_symbol] = df.iloc[-1]['close']
-                
-            # Ensure Sorted
-            df = df.sort_values('date')
 
             # Start Replay Task
             if ticker_symbol in self.active_tasks:
@@ -195,7 +192,7 @@ class MockIBService:
             # Emit Event
             for cb in self.price_callbacks:
                 if asyncio.iscoroutinefunction(cb):
-                    asyncio.create_task(cb(mt))
+                    await cb(mt) # Ensure sequential processing
                 else:
                     cb(mt)
             
