@@ -277,6 +277,10 @@ async def get_quote(ticker: str):
     
     try:
         price = await ib_service.get_price(ticker)
+        
+        if price is None:
+             return {"ticker": ticker, "price": 0.0, "status": "not_found", "error": "Invalid Ticker"}
+
         # Handle NaN values explicitly using 0.0 or valid float
         if price != price: # Check for NaN
             price = 0.0 

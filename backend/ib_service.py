@@ -49,7 +49,12 @@ class IBIntegration:
         try:
             await self.ib.qualifyContractsAsync(contract)
         except Exception as e:
-            print(f"Contract qualification warning: {e}")
+            print(f"Contract qualification warning/error: {e}")
+            return None # Invalid ticker
+
+        if contract.conId == 0:
+            print(f"Contract validation failed (conId=0): {ticker_symbol}")
+            return None
         
         # Switch to configured Market Data Type
         self.ib.reqMarketDataType(self.market_data_type) 

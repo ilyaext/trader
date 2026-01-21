@@ -91,6 +91,8 @@ with tab1:
             if quote.get('status') == 'connected':
                 with price_container:
                     st.metric(label=f"{ticker} Price", value=f"${price_val:.2f}")
+            elif quote.get('status') == 'not_found':
+                price_container.error(f"Unknown Ticker: {ticker}")
             else:
                 price_container.warning("IBKR Disconnected - Waiting for reconnect...")
         else:
