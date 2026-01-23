@@ -245,7 +245,7 @@ class IBIntegration:
                 "action": trade.order.action,
                 "total_qty": trade.order.totalQuantity,
                 "filled_qty": trade.orderStatus.filled,
-                "price": trade.order.lmtPrice if trade.order.orderType == 'LIMIT' else 0.0,
+                "price": trade.order.lmtPrice if trade.order.orderType in ['LIMIT', 'LMT'] else 0.0,
                 "avg_fill_price": trade.orderStatus.avgFillPrice,
                 "status": trade.orderStatus.status,
                 "type": trade.order.orderType

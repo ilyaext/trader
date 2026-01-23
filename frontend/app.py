@@ -41,8 +41,10 @@ with tab1:
              orders = orders_res.json()
              if orders:
                  df_orders = pd.DataFrame(orders)
+                 # Rename columns for display
+                 df_orders.rename(columns={'price': 'Limit', 'id': 'ID', 'time': 'Time', 'ticker': 'Ticker', 'action': 'Action', 'total_qty': 'Qty', 'filled_qty': 'Filled', 'status': 'Status', 'type': 'Type'}, inplace=True)
                  st.dataframe(
-                     df_orders[['id', 'time', 'ticker', 'action', 'total_qty', 'filled_qty', 'price', 'status', 'type']], 
+                     df_orders[['ID', 'Time', 'Ticker', 'Action', 'Qty', 'Filled', 'Limit', 'Status', 'Type']], 
                      hide_index=True,
                      use_container_width=True
                  )
