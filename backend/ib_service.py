@@ -103,8 +103,7 @@ class IBIntegration:
                 return bars[-1].close
         except Exception as e:
             print(f"DEBUG: Historical Data failed: {e}")
-
-        return 0.0
+            raise e
 
     async def place_order(self, ticker_symbol, action, quantity):
         if not self.check_connection:

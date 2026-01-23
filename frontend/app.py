@@ -93,6 +93,8 @@ with tab1:
                     st.metric(label=f"{ticker} Price", value=f"${price_val:.2f}")
             elif quote.get('status') == 'not_found':
                 price_container.error(f"Unknown Ticker: {ticker}")
+            elif quote.get('status') == 'error':
+                 price_container.error(f"IBKR Error: {quote.get('error')}")
             else:
                 price_container.warning("IBKR Disconnected - Waiting for reconnect...")
         else:
@@ -204,11 +206,10 @@ with tab3:
         if active_strats:
             # Display as a table with "Delete" buttons
             # Using columns for layout
-            st.markdown(f"**active: {len(active_strats)}**")
             
-            header_cols = st.columns([1, 0.5, 1.5, 1, 1, 1, 1, 0.5]) 
+            header_cols = st.columns([1, 0.5, 1.5, 1, 1, 1, 1, 0.5], vertical_alignment="center") 
             header_cols[0].markdown("**Ticker**")
-            header_cols[1].markdown("**Live**")
+            header_cols[1].markdown("**Manual**")
             header_cols[2].markdown("**Price**")
             header_cols[3].markdown("**Last Update**")
             header_cols[4].markdown("**Entry**")
@@ -217,15 +218,21 @@ with tab3:
             header_cols[7].markdown("**Action**")
             
             for s in active_strats:
-                cols = st.columns([1, 0.5, 1.5, 1, 1, 1, 1, 0.5])
+                cols = st.columns([1, 0.5, 1.5, 1, 1, 1, 1, 0.5], vertical_alignment="center")
                 cols[0].text(s['ticker'])
                 
-                # Live Toggle
+                # Manual Toggle (Inverted Live)
                 is_live = s.get('is_live', True)
-                new_live = cols[1].checkbox(" ", value=is_live, key=f"live_{s['id']}", label_visibility="collapsed")
-                if new_live != is_live:
-                    requests.patch(f"{ST_BACKEND_URL}/strategies/{s['id']}", json={"is_live": new_live})
-                    st.rerun()
+                is_manual = not is_live
+                new_manual = cols[1].checkbox(" ", value=is_manual, key=f"manual_{s['id']}", label_visibility="collapsed")
+                
+                if new_manual != is_manual:
+                    # If Manual Checked (True) -> Live = False
+                    # Update Backend
+                    requests.patch(f"{ST_BACKEND_URL}/strategies/{s['id']}", json={"is_live": not new_manual})
+                    # Update local state so UI reflects change immediately without rerun
+                    s['is_live'] = not new_manual
+                    # We don't call st.rerun(), we let the fragment continue properly
 
                 # Display Price (Read-Only in Table)
                 c_price = s.get('current_price', 0.0) or 0.0
@@ -241,36 +248,42 @@ with tab3:
                 
                 if cols[7].button("❌", key=f"del_{s['id']}"):
                     requests.delete(f"{ST_BACKEND_URL}/strategies/{s['id']}")
-                    st.rerun()
+                    # Locally mark as deleted (status changed) so manual_strats filter works if needed
+                    s['status'] = 'deleted'
+                    st.rerun() # Keep rerun for delete as row removal is cleaner with full refresh, or try st.rerun(scope="fragment") if available, but full rerun is safer for delete.
+                    # actually user complained about uncheck manual. I will keep rerun for delete for now as it modifies the list length significantly.
             
             # --- Manual Price Injection Section ---
+            form_placeholder = st.empty()
             manual_strats = [s for s in active_strats if not s.get('is_live', True)]
+            
             if manual_strats:
-                st.markdown("### 🛠️ Manual Price Injection")
-                with st.form("manual_price_form"):
-                    c1, c2, c3 = st.columns([2, 2, 1])
-                    
-                    # Create dictionary for selectbox {label: id}
-                    # We use Ticker for label, but update by ID
-                    strat_options = {s['ticker']: s['id'] for s in manual_strats}
-                    
-                    with c1:
-                        target_ticker = st.selectbox("Select Strategy", options=list(strat_options.keys()))
-                    
-                    selected_id = strat_options.get(target_ticker)
-                    
-                    # Try to pre-fill current price if possible (Streamlit forms make dynamic defaults hard, default to 0.0)
-                    with c2:
-                         new_manual_price = st.number_input("New Price ($)", min_value=0.0, step=0.01)
-                    
-                    with c3:
-                        st.markdown("<br>", unsafe_allow_html=True) # Spacer for alignment
-                        if st.form_submit_button("Update Price"):
-                            if selected_id:
-                                requests.patch(f"{ST_BACKEND_URL}/strategies/{selected_id}", json={"current_price": new_manual_price})
-                                st.rerun()
+                with form_placeholder.container():
+                     st.markdown("### 🛠️ Manual Price Injection")
+                     # Use a static key to avoid lifecycle issues, relying on the container to redraw
+                     with st.form(key="manual_price_update_form"):
+                        c1, c2, c3 = st.columns([2, 2, 1], vertical_alignment="bottom") # Align bottom for button
+                        
+                        strat_options = {s['ticker']: s['id'] for s in manual_strats}
+                        
+                        with c1:
+                            target_ticker = st.selectbox("Select Strategy", options=list(strat_options.keys()))
+                        
+                        selected_id = strat_options.get(target_ticker)
+                        
+                        with c2:
+                             new_manual_price = st.number_input("New Price ($)", min_value=0.0, step=0.01)
+                        
+                        with c3:
+                            if st.form_submit_button("Update Price"):
+                                if selected_id:
+                                    requests.patch(f"{ST_BACKEND_URL}/strategies/{selected_id}", json={"current_price": new_manual_price})
+                                    st.rerun()
+            else:
+                form_placeholder.empty()
         else:
             st.info("No active alerts.")
+
 
 
     render_monitored_strategies()
