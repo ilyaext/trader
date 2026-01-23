@@ -34,26 +34,30 @@ ticker = st.sidebar.text_input("Ticker Symbol", value="SPY").strip().upper()
 tab1, tab2, tab3 = st.tabs(["Trading", "Historical Data", "Strategy Agent"])
 
 with tab1:
-    st.subheader("Orders")
-    try:
-         orders_res = requests.get(f"{ST_BACKEND_URL}/orders")
-         if orders_res.status_code == 200:
-             orders = orders_res.json()
-             if orders:
-                 df_orders = pd.DataFrame(orders)
-                 # Rename columns for display
-                 df_orders.rename(columns={'price': 'Limit', 'id': 'ID', 'time': 'Time', 'ticker': 'Ticker', 'action': 'Action', 'total_qty': 'Qty', 'filled_qty': 'Filled', 'status': 'Status', 'type': 'Type'}, inplace=True)
-                 st.dataframe(
-                     df_orders[['ID', 'Time', 'Ticker', 'Action', 'Qty', 'Filled', 'Limit', 'Status', 'Type']], 
-                     hide_index=True,
-                     use_container_width=True
-                 )
-             else:
-                 st.info("No active/executed orders this session.")
-         else:
-             st.error(f"Error fetching orders: {orders_res.text}")
-    except Exception as e:
-         st.error(f"Connection Error: {e}")
+    @st.fragment(run_every=2)
+    def render_orders():
+         st.subheader("Orders")
+         try:
+              orders_res = requests.get(f"{ST_BACKEND_URL}/orders")
+              if orders_res.status_code == 200:
+                  orders = orders_res.json()
+                  if orders:
+                      df_orders = pd.DataFrame(orders)
+                      # Rename columns for display
+                      df_orders.rename(columns={'price': 'Limit', 'id': 'ID', 'time': 'Time', 'ticker': 'Ticker', 'action': 'Action', 'total_qty': 'Qty', 'filled_qty': 'Filled', 'status': 'Status', 'type': 'Type'}, inplace=True)
+                      st.dataframe(
+                          df_orders[['ID', 'Time', 'Ticker', 'Action', 'Qty', 'Filled', 'Limit', 'Status', 'Type']], 
+                          hide_index=True,
+                          use_container_width=True
+                      )
+                  else:
+                      st.info("No active/executed orders this session.")
+              else:
+                  st.error(f"Error fetching orders: {orders_res.text}")
+         except Exception as e:
+              st.error(f"Connection Error: {e}")
+
+    render_orders()
 
     st.markdown("---")
 

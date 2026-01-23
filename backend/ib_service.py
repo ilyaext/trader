@@ -25,6 +25,11 @@ class IBIntegration:
         # Event Callbacks
         self.price_callbacks = []
         self.ib.pendingTickersEvent += self.on_pending_tickers
+        self.ib.orderStatusEvent += self.on_order_status
+
+    def on_order_status(self, trade):
+        """Callback for real-time order updates from IBKR"""
+        print(f"🔔 IBKR NOTIFICATION: Order {trade.order.orderId} Status: {trade.orderStatus.status} | Filled: {trade.orderStatus.filled}")
 
     async def connect(self):
         if not self.ib.isConnected():
