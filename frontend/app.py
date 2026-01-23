@@ -34,94 +34,39 @@ ticker = st.sidebar.text_input("Ticker Symbol", value="SPY").strip().upper()
 tab1, tab2, tab3 = st.tabs(["Trading", "Historical Data", "Strategy Agent"])
 
 with tab1:
-    col1, col2 = st.columns([2, 1])
-    
-    with col1:
-        st.subheader(f"Market Data: {ticker}")
-        
-        # Placeholder for live price
-        price_container = st.empty()
-        chart_container = st.empty()
-        
-        # Auto-refresh mechanism setup (simple loop for demo)
-        if 'history' not in st.session_state:
-            st.session_state.history = []
-    
-    with col2:
-        st.subheader("Trade Execution")
-        
-        quantity = st.number_input("Quantity", min_value=1, value=1)
-        
-        if st.button("BUY MARKET", type="primary", use_container_width=True):
-            if ib_status != "Connected":
-                st.error("Cannot trade: IBKR Disconnected")
-            else:
-                try:
-                    payload = {"ticker": ticker, "action": "BUY", "quantity": quantity}
-                    res = requests.post(f"{ST_BACKEND_URL}/order", json=payload)
-                    if res.status_code == 200:
-                        order_info = res.json()
-                        st.success(f"Order Submitted! ID: {order_info['ib_id']}")
-                    else:
-                        st.error(f"Failed: {res.text}")
-                except Exception as e:
-                    st.error(f"Error: {e}")
-    
-        st.markdown("---")
-        st.subheader("Live Orders (Session)")
-        try:
-             orders_res = requests.get(f"{ST_BACKEND_URL}/orders")
-             if orders_res.status_code == 200:
-                 orders = orders_res.json()
-                 if orders:
-                     df_orders = pd.DataFrame(orders)
-                     st.dataframe(
-                         df_orders[['id', 'time', 'ticker', 'action', 'total_qty', 'filled_qty', 'price', 'status', 'type']], 
-                         hide_index=True,
-                         use_container_width=True
-                     )
-                 else:
-                     st.info("No active/executed orders this session.")
-             else:
-                 st.error(f"Error fetching orders: {orders_res.text}")
-        except Exception as e:
-             st.error(f"Connection Error: {e}")
-
-        st.markdown("---")
-        st.subheader("Recent Activity (DB)")
-        try:
-            trades_res = requests.get(f"{ST_BACKEND_URL}/trades")
-            if trades_res.status_code == 200:
-                trades = trades_res.json()
-                if trades:
-                    df = pd.DataFrame(trades)
-                    st.dataframe(df[['timestamp', 'ticker', 'action', 'quantity', 'ib_order_id']], hide_index=True)
-                else:
-                    st.info("No trades recorded yet.")
-        except:
-            st.warning("Could not fetch trades")
-            
-    # Fetch current price once per render (for Tab 1)
+    st.subheader("Orders")
     try:
-        response = requests.get(f"{ST_BACKEND_URL}/quote/{ticker}")
-        if response.status_code == 200:
-            quote = response.json()
-            price_val = quote.get('price', 0.0)
-            
-            if quote.get('status') == 'connected':
-                with price_container:
-                    st.metric(label=f"{ticker} Price", value=f"${price_val:.2f}")
-            elif quote.get('status') == 'not_found':
-                price_container.error(f"Unknown Ticker: {ticker}")
-            elif quote.get('status') == 'error':
-                 price_container.error(f"IBKR Error: {quote.get('error')}")
-            else:
-                price_container.warning("IBKR Disconnected - Waiting for reconnect...")
-        else:
-            price_container.error(f"Backend Error ({response.status_code}): {response.text}")
-            
+         orders_res = requests.get(f"{ST_BACKEND_URL}/orders")
+         if orders_res.status_code == 200:
+             orders = orders_res.json()
+             if orders:
+                 df_orders = pd.DataFrame(orders)
+                 st.dataframe(
+                     df_orders[['id', 'time', 'ticker', 'action', 'total_qty', 'filled_qty', 'price', 'status', 'type']], 
+                     hide_index=True,
+                     use_container_width=True
+                 )
+             else:
+                 st.info("No active/executed orders this session.")
+         else:
+             st.error(f"Error fetching orders: {orders_res.text}")
     except Exception as e:
-        price_container.error(f"Connection Error: {e}")
+         st.error(f"Connection Error: {e}")
+
+    st.markdown("---")
+
+    st.subheader("Recent Activity (DB)")
+    try:
+        trades_res = requests.get(f"{ST_BACKEND_URL}/trades")
+        if trades_res.status_code == 200:
+            trades = trades_res.json()
+            if trades:
+                df = pd.DataFrame(trades)
+                st.dataframe(df[['timestamp', 'ticker', 'action', 'quantity', 'ib_order_id']], hide_index=True)
+            else:
+                st.info("No trades recorded yet.")
+    except:
+        st.warning("Could not fetch trades")
 
 with tab2:
     st.subheader("Download Historical Data")
