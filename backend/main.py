@@ -50,6 +50,11 @@ async def on_price_update(ticker):
         for strategy in active_strategies:
             if strategy.is_live:
                 strategy.current_price = price
+                
+                # Calculate Daily Change % using IBKR Close
+                if ticker.close and ticker.close > 0:
+                    strategy.daily_change_pct = ((price - ticker.close) / ticker.close) * 100
+                    
                 strategy.last_updated = datetime.now().strftime("%H:%M:%S")
             # print(f"DEBUG: {strategy.ticker} Price={price} Entry={strategy.entry_price}")
 

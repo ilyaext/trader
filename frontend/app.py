@@ -207,18 +207,20 @@ with tab3:
             # Display as a table with "Delete" buttons
             # Using columns for layout
             
-            header_cols = st.columns([1, 0.5, 1.5, 1, 1, 1, 1, 0.5], vertical_alignment="center") 
+            # Cols: Ticker, Manual, Price, Daily %, Update, Stop Loss, Qty, Action
+            header_cols = st.columns([1, 0.5, 1.2, 1.2, 1, 1, 1, 0.5], vertical_alignment="center") 
             header_cols[0].markdown("**Ticker**")
             header_cols[1].markdown("**Manual**")
             header_cols[2].markdown("**Price**")
-            header_cols[3].markdown("**Last Update**")
-            header_cols[4].markdown("**Entry**")
+            header_cols[3].markdown("**Daily %**")
+            header_cols[4].markdown("**Last Update**")
+            # header_cols[5].markdown("**Entry**") # Removed as requested
             header_cols[5].markdown("**Stop Loss**")
             header_cols[6].markdown("**Qty**")
             header_cols[7].markdown("**Action**")
             
             for s in active_strats:
-                cols = st.columns([1, 0.5, 1.5, 1, 1, 1, 1, 0.5], vertical_alignment="center")
+                cols = st.columns([1, 0.5, 1.2, 1.2, 1, 1, 1, 0.5], vertical_alignment="center")
                 cols[0].text(s['ticker'])
                 
                 # Manual Toggle (Inverted Live)
@@ -232,17 +234,24 @@ with tab3:
                     requests.patch(f"{ST_BACKEND_URL}/strategies/{s['id']}", json={"is_live": not new_manual})
                     # Update local state so UI reflects change immediately without rerun
                     s['is_live'] = not new_manual
-                    # We don't call st.rerun(), we let the fragment continue properly
 
                 # Display Price (Read-Only in Table)
                 c_price = s.get('current_price', 0.0) or 0.0
                 cols[2].text(f"${c_price:.2f}")
 
+                # Calculate Daily % (Backend Provided)
+                daily_pct = s.get('daily_change_pct')
+                if daily_pct is not None:
+                    color = "green" if daily_pct >= 0 else "red"
+                    cols[3].markdown(f":{color}[{daily_pct:+.2f}%]")
+                else:
+                    cols[3].text("-")
+
                 # Display Last Update
                 l_updated = s.get('last_updated')
-                cols[3].text(f"{l_updated}" if l_updated else "-")
+                cols[4].text(f"{l_updated}" if l_updated else "-")
                 
-                cols[4].text(f"${s['entry_price']}")
+                # cols[5].text(f"${s['entry_price']}")
                 cols[5].text(f"${s['stop_loss']}" if s['stop_loss'] else "-")
                 cols[6].text(s['quantity'])
                 
@@ -250,8 +259,7 @@ with tab3:
                     requests.delete(f"{ST_BACKEND_URL}/strategies/{s['id']}")
                     # Locally mark as deleted (status changed) so manual_strats filter works if needed
                     s['status'] = 'deleted'
-                    st.rerun() # Keep rerun for delete as row removal is cleaner with full refresh, or try st.rerun(scope="fragment") if available, but full rerun is safer for delete.
-                    # actually user complained about uncheck manual. I will keep rerun for delete for now as it modifies the list length significantly.
+                    st.rerun()
             
             # --- Manual Price Injection Section ---
             form_placeholder = st.empty()

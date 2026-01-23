@@ -24,5 +24,6 @@ class Strategy(BaseModel):
     created_at: str
     last_seen_price: Optional[float] = None # For tracking sequential candles
     current_price: Optional[float] = None
+    daily_change_pct: Optional[float] = None
     last_updated: Optional[str] = None
     is_live: bool = True
