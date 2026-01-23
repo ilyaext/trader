@@ -105,12 +105,16 @@ class IBIntegration:
             print(f"DEBUG: Historical Data failed: {e}")
             raise e
 
-    async def place_order(self, ticker_symbol, action, quantity):
+    async def place_order(self, ticker_symbol, action, quantity, order_type="MARKET", limit_price=0.0):
         if not self.check_connection:
             raise Exception("IBKR not connected")
 
         contract = Stock(ticker_symbol, 'SMART', 'USD')
-        order = MarketOrder(action, quantity)
+        
+        if order_type.upper() == "LIMIT":
+            order = LimitOrder(action, quantity, limit_price)
+        else:
+            order = MarketOrder(action, quantity)
         
         trade = self.ib.placeOrder(contract, order)
         
@@ -224,5 +228,31 @@ class IBIntegration:
 
     def register_callback(self, callback):
         self.price_callbacks.append(callback)
+
+    def get_today_orders(self):
+        """Returns all orders (active and executed) for the current session"""
+        if not self.check_connection:
+            return []
+            
+        orders_data = []
+        # ib.trades() returns a list of Trade objects for the current session
+        for trade in self.ib.trades():
+            # Format for frontend
+            orders_data.append({
+                "id": trade.order.orderId,
+                "time": trade.log[-1].time.strftime("%H:%M:%S") if trade.log else "-",
+                "ticker": trade.contract.symbol,
+                "action": trade.order.action,
+                "total_qty": trade.order.totalQuantity,
+                "filled_qty": trade.orderStatus.filled,
+                "price": trade.order.lmtPrice if trade.order.orderType == 'LIMIT' else 0.0,
+                "avg_fill_price": trade.orderStatus.avgFillPrice,
+                "status": trade.orderStatus.status,
+                "type": trade.order.orderType
+            })
+        
+        # Sort by ID descending (newest first usually)
+        orders_data.sort(key=lambda x: x['id'], reverse=True)
+        return orders_data
 
 ib_service = IBIntegration()

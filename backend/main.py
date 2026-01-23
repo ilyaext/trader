@@ -56,6 +56,28 @@ async def on_price_update(ticker):
                     strategy.daily_change_pct = ((price - ticker.close) / ticker.close) * 100
                     
                 strategy.last_updated = datetime.now().strftime("%H:%M:%S")
+
+                # BREAKOUT STRATEGY LOGIC:
+                # If Price > Entry Alert (Entry Price), Place Buy Limit Order
+                if price > strategy.entry_price:
+                    print(f"🚀 TRIGGER: {strategy.ticker} Price {price} > Entry {strategy.entry_price}. Placing Order!")
+                    try:
+                        # Place Limit Order at Entry Price (or Price? User said "limit equals to Entry Alert")
+                        # "create buy limit order with limit equals to Entry Alert"
+                        asyncio.create_task(ib_service.place_order(
+                            strategy.ticker, 
+                            "BUY", 
+                            strategy.quantity, 
+                            order_type="LIMIT", 
+                            limit_price=strategy.entry_price
+                        ))
+                        
+                        # Mark as executed to prevent double-firing
+                        strategy.status = "executed"
+                        strategy.is_live = False # Stop monitoring
+                        print(f"✅ Strategy {strategy.ticker} EXECUTED.")
+                    except Exception as e:
+                        print(f"❌ Failed to execute strategy {strategy.ticker}: {e}")
             # print(f"DEBUG: {strategy.ticker} Price={price} Entry={strategy.entry_price}")
 
 @asynccontextmanager
@@ -321,6 +343,13 @@ async def place_order(order: OrderRequest, db: Session = Depends(get_db)):
 async def get_trades(db: Session = Depends(get_db)):
     trades = db.query(Trade).order_by(Trade.timestamp.desc()).limit(10).all()
     return trades
+
+@app.get("/orders")
+async def get_orders():
+    """Returns all IBr orders for the current session"""
+    if not ib_service.check_connection:
+        return []
+    return ib_service.get_today_orders()
 
 class HistoryRequest(BaseModel):
     ticker: str

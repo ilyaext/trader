@@ -68,7 +68,27 @@ with tab1:
                     st.error(f"Error: {e}")
     
         st.markdown("---")
-        st.subheader("Recent Activity")
+        st.subheader("Live Orders (Session)")
+        try:
+             orders_res = requests.get(f"{ST_BACKEND_URL}/orders")
+             if orders_res.status_code == 200:
+                 orders = orders_res.json()
+                 if orders:
+                     df_orders = pd.DataFrame(orders)
+                     st.dataframe(
+                         df_orders[['id', 'time', 'ticker', 'action', 'total_qty', 'filled_qty', 'price', 'status', 'type']], 
+                         hide_index=True,
+                         use_container_width=True
+                     )
+                 else:
+                     st.info("No active/executed orders this session.")
+             else:
+                 st.error(f"Error fetching orders: {orders_res.text}")
+        except Exception as e:
+             st.error(f"Connection Error: {e}")
+
+        st.markdown("---")
+        st.subheader("Recent Activity (DB)")
         try:
             trades_res = requests.get(f"{ST_BACKEND_URL}/trades")
             if trades_res.status_code == 200:
@@ -148,7 +168,7 @@ with tab3:
             with c1:
                 s_ticker = st.text_input("Ticker", "SPY").strip().upper()
             with c2:
-                s_entry = st.number_input("Entry Price ($)", min_value=0.0, step=0.01)
+                s_entry = st.number_input("Entry Alert ($)", min_value=0.0, step=0.01)
             with c3:
                 s_sl = st.number_input("Stop Loss ($)", min_value=0.0, step=0.01, value=0.0)
             with c4:
@@ -207,20 +227,20 @@ with tab3:
             # Display as a table with "Delete" buttons
             # Using columns for layout
             
-            # Cols: Ticker, Manual, Price, Daily %, Update, Stop Loss, Qty, Action
-            header_cols = st.columns([1, 0.5, 1.2, 1.2, 1, 1, 1, 0.5], vertical_alignment="center") 
+            # Cols: Ticker, Manual, Price, Daily %, Entry Alert, Update, Stop Loss, Qty, Action
+            header_cols = st.columns([1, 0.5, 1.2, 1.2, 1.2, 1, 1, 1, 0.5], vertical_alignment="center") 
             header_cols[0].markdown("**Ticker**")
             header_cols[1].markdown("**Manual**")
             header_cols[2].markdown("**Price**")
             header_cols[3].markdown("**Daily %**")
-            header_cols[4].markdown("**Last Update**")
-            # header_cols[5].markdown("**Entry**") # Removed as requested
-            header_cols[5].markdown("**Stop Loss**")
-            header_cols[6].markdown("**Qty**")
-            header_cols[7].markdown("**Action**")
+            header_cols[4].markdown("**Entry Alert**")
+            header_cols[5].markdown("**Last Update**")
+            header_cols[6].markdown("**Stop Loss**")
+            header_cols[7].markdown("**Qty**")
+            header_cols[8].markdown("**Action**")
             
             for s in active_strats:
-                cols = st.columns([1, 0.5, 1.2, 1.2, 1, 1, 1, 0.5], vertical_alignment="center")
+                cols = st.columns([1, 0.5, 1.2, 1.2, 1.2, 1, 1, 1, 0.5], vertical_alignment="center")
                 cols[0].text(s['ticker'])
                 
                 # Manual Toggle (Inverted Live)
@@ -247,15 +267,17 @@ with tab3:
                 else:
                     cols[3].text("-")
 
+                # Entry Alert
+                cols[4].text(f"${s['entry_price']}")
+
                 # Display Last Update
                 l_updated = s.get('last_updated')
-                cols[4].text(f"{l_updated}" if l_updated else "-")
+                cols[5].text(f"{l_updated}" if l_updated else "-")
                 
-                # cols[5].text(f"${s['entry_price']}")
-                cols[5].text(f"${s['stop_loss']}" if s['stop_loss'] else "-")
-                cols[6].text(s['quantity'])
+                cols[6].text(f"${s['stop_loss']}" if s['stop_loss'] else "-")
+                cols[7].text(s['quantity'])
                 
-                if cols[7].button("❌", key=f"del_{s['id']}"):
+                if cols[8].button("❌", key=f"del_{s['id']}"):
                     requests.delete(f"{ST_BACKEND_URL}/strategies/{s['id']}")
                     # Locally mark as deleted (status changed) so manual_strats filter works if needed
                     s['status'] = 'deleted'
