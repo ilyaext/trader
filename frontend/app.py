@@ -109,6 +109,22 @@ with tab1:
 
                     styled_df = display_df.style.map(color_pnl, subset=['P/L %', 'P/L $', 'Total P/L $', 'Total P/L %', 'Risk'])
                     
+                    # Apply formatting directly to Styler to ensure it renders correctly
+                    # (Streamlit column_config can be overridden by Styler)
+                    styled_df = styled_df.format({
+                        'P/L %': "{:.2f}%", 
+                        'P/L $': "${:.2f}",
+                        'Cur. Price': "${:.2f}",
+                        'Avg Price': "${:.2f}",
+                        'Stop Price': "${:.2f}",
+                        'Distance': "${:.2f}",
+                        'Risk': "${:.2f}", 
+                        'Total P/L $': "${:.2f}",
+                        'Total P/L %': "{:.2f}%",
+                        'Mkt Value': "${:.2f}",
+                        'Qty': "{:.0f}"
+                    })
+                    
                     st.dataframe(
                         styled_df,
                         column_config={
@@ -122,6 +138,7 @@ with tab1:
                             "Stop Price": st.column_config.NumberColumn("Stop Price", format="$%.2f"),
                             "Distance": st.column_config.NumberColumn("Distance", format="$%.2f"),
                             "Risk": st.column_config.NumberColumn("Risk", format="$%.2f"),
+                            "Qty": st.column_config.NumberColumn("Qty", format="%d"),
                         },
                         hide_index=True,
                         use_container_width=True
@@ -157,6 +174,12 @@ with tab1:
                       # Columns: ID, Time, Ticker, Action, Qty, Limit, Stop Price, Price, Status, Type
                       st.dataframe(
                           df_orders[['ID', 'Time', 'Ticker', 'Action', 'Qty', 'Limit', 'Stop Price', 'Price', 'Status', 'Type']], 
+                          column_config={
+                              "Qty": st.column_config.NumberColumn("Qty", format="%d"),
+                              "Limit": st.column_config.NumberColumn("Limit", format="$%.2f"),
+                              "Stop Price": st.column_config.NumberColumn("Stop Price", format="$%.2f"),
+                              "Price": st.column_config.NumberColumn("Price", format="$%.2f"),
+                          },
                           hide_index=True,
                           use_container_width=True
                       )
@@ -334,14 +357,14 @@ with tab3:
                     cols[3].text("-")
 
                 # Entry Alert
-                cols[4].text(f"${s['entry_price']}")
+                cols[4].text(f"${s['entry_price']:.2f}")
 
                 # Display Last Update
                 l_updated = s.get('last_updated')
                 cols[5].text(f"{l_updated}" if l_updated else "-")
                 
-                cols[6].text(f"${s['stop_loss']}" if s['stop_loss'] else "-")
-                cols[7].text(s['quantity'])
+                cols[6].text(f"${s['stop_loss']:.2f}" if s['stop_loss'] else "-")
+                cols[7].text(int(s['quantity']))
                 
                 if cols[8].button("❌", key=f"del_{s['id']}"):
                     requests.delete(f"{ST_BACKEND_URL}/strategies/{s['id']}")
