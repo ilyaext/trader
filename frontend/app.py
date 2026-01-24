@@ -31,7 +31,82 @@ st.sidebar.markdown("---")
 ticker = st.sidebar.text_input("Ticker Symbol", value="SPY").strip().upper()
 
 # --- Main Content ---
-tab1, tab2, tab3 = st.tabs(["Trading", "Historical Data", "Strategy Agent"])
+tab1, tab_portfolio, tab2, tab3 = st.tabs(["Trading", "Portfolio", "Historical Data", "Strategy Agent"])
+
+with tab_portfolio:
+    st.subheader("Your Portfolio")
+    
+    @st.fragment(run_every=5)
+    def render_portfolio():
+        try:
+            port_res = requests.get(f"{ST_BACKEND_URL}/portfolio")
+            if port_res.status_code == 200:
+                portfolio = port_res.json()
+                if portfolio:
+                    df = pd.DataFrame(portfolio)
+                    
+                    # Columns: ticker, quantity, avg_cost, market_price, market_value, unrealized_pnl, realized_pnl, pnl_percent
+                    # User requested: purchasing date, contity, P/L $, total marketing value, Price, P/L%
+                    
+                    # Map to display columns
+                    # We don't have purchasing date yet (N/A)
+                    df['Purchase Date'] = "N/A" 
+                    
+                    # Formatting
+                    df['P/L $'] = df['unrealized_pnl']
+                    df['P/L %'] = df['pnl_percent']
+                    
+                    # Select and Order Columns
+                    display_df = df[[
+                        'ticker', 'Purchase Date', 'quantity', 'avg_cost', 
+                        'market_price', 'P/L %', 'P/L $', 'market_value'
+                    ]].copy()
+                    
+                    display_df.columns = [
+                        'Ticker', 'Pur. Date', 'Qty', 'Avg Price', 
+                        'Cur. Price', 'P/L %', 'P/L $', 'Mkt Value'
+                    ]
+                    
+                    # Style logic for P/L
+                    # We can't easily style individual cells in st.dataframe without pandas Styler, 
+                    # but st.dataframe supports some basic highlighting or we can just show values.
+                    # Streamlit's column config is better.
+                    
+                    st.dataframe(
+                        display_df,
+                        column_config={
+                            "P/L %": st.column_config.NumberColumn(
+                                "P/L %",
+                                format="%.2f%%",
+                            ),
+                            "P/L $": st.column_config.NumberColumn(
+                                "P/L $",
+                                format="$%.2f",
+                            ),
+                            "Mkt Value": st.column_config.NumberColumn(
+                                "Mkt Value",
+                                format="$%.2f",
+                            ),
+                            "Avg Price": st.column_config.NumberColumn(
+                                "Avg Price",
+                                format="$%.2f",
+                            ),
+                             "Cur. Price": st.column_config.NumberColumn(
+                                "Cur. Price",
+                                format="$%.2f",
+                            ),
+                        },
+                        hide_index=True,
+                        use_container_width=True
+                    )
+                else:
+                    st.info("Portfolio is empty.")
+            else:
+                st.error("Failed to fetch portfolio data")
+        except Exception as e:
+            st.error(f"Error: {e}")
+
+    render_portfolio()
 
 with tab1:
     @st.fragment(run_every=2)
@@ -44,9 +119,14 @@ with tab1:
                   if orders:
                       df_orders = pd.DataFrame(orders)
                       # Rename columns for display
-                      df_orders.rename(columns={'price': 'Limit', 'id': 'ID', 'time': 'Time', 'ticker': 'Ticker', 'action': 'Action', 'total_qty': 'Qty', 'filled_qty': 'Filled', 'status': 'Status', 'type': 'Type'}, inplace=True)
+                      # Rename 'current_or_filled_price' -> 'Price'
+                      # Rename 'price' -> 'Limit'
+                      df_orders.rename(columns={'current_or_filled_price': 'Price', 'price': 'Limit', 'id': 'ID', 'time': 'Time', 'ticker': 'Ticker', 'action': 'Action', 'total_qty': 'Qty', 'status': 'Status', 'type': 'Type'}, inplace=True)
+                      
+                      # Columns: ID, Time, Ticker, Action, Qty, Limit, Price, Status, Type
+                      # Removed 'Filled' (Qty) as requested to be replaced by Price context
                       st.dataframe(
-                          df_orders[['ID', 'Time', 'Ticker', 'Action', 'Qty', 'Filled', 'Limit', 'Status', 'Type']], 
+                          df_orders[['ID', 'Time', 'Ticker', 'Action', 'Qty', 'Limit', 'Price', 'Status', 'Type']], 
                           hide_index=True,
                           use_container_width=True
                       )

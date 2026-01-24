@@ -288,6 +288,34 @@ async def list_positions():
             
     return positions_data 
 
+@app.get("/portfolio")
+async def get_portfolio():
+    if not ib_service.check_connection:
+        return []
+        
+    portfolio = ib_service.get_portfolio()
+    
+    # Enrich with calculated fields if needed, though most come from IB
+    for item in portfolio:
+        # Calculate P&L % 
+        # (Market Value - (Avg Cost * Qty)) / (Avg Cost * Qty) * 100
+        # OR simply (Market Price - Avg Cost) / Avg Cost * 100
+        
+        avg_cost = item['avg_cost']
+        market_price = item['market_price']
+        
+        pnl_pct = 0.0
+        if avg_cost > 0:
+            pnl_pct = (market_price - avg_cost) / avg_cost * 100
+            
+        item['pnl_percent'] = pnl_pct
+        
+        # Determine strict "Purchased Date" -> Not available in portfolio()
+        # We will leave it as None or handle in frontend
+        item['purchased_date'] = None
+        
+    return portfolio 
+
 class OrderRequest(BaseModel):
     ticker: str
     action: str = "BUY"

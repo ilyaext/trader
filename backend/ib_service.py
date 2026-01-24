@@ -123,6 +123,18 @@ class IBIntegration:
         
         trade = self.ib.placeOrder(contract, order)
         
+        # Ensure we are subscribed to market data so we can track price in Orders table
+        # Check if already subscribed
+        is_subscribed = False
+        for t in self.ib.tickers():
+            if t.contract.symbol == ticker_symbol:
+                is_subscribed = True
+                break
+        
+        if not is_subscribed:
+            print(f"DEBUG: Auto-subscribing to {ticker_symbol} for order tracking")
+            self.ib.reqMktData(contract, '', False, False)
+        
         # Wait for fill? For Hello World, we just return the trade object
         # In prod we would await trade.filledEvent
         return trade
@@ -231,6 +243,25 @@ class IBIntegration:
                 
         return 0.0
 
+    def get_portfolio(self):
+        """Returns the current portfolio items"""
+        if not self.check_connection:
+            return []
+            
+        portfolio_items = []
+        for item in self.ib.portfolio():
+            portfolio_items.append({
+                "ticker": item.contract.symbol,
+                "quantity": item.position,
+                "avg_cost": item.averageCost,
+                "market_price": item.marketPrice,
+                "market_value": item.marketValue,
+                "unrealized_pnl": item.unrealizedPNL,
+                "realized_pnl": item.realizedPNL,
+                "account": item.account
+            })
+        return portfolio_items
+
     def register_callback(self, callback):
         self.price_callbacks.append(callback)
 
@@ -243,6 +274,45 @@ class IBIntegration:
         # ib.trades() returns a list of Trade objects for the current session
         for trade in self.ib.trades():
             # Format for frontend
+            # Determine "Price" to display (Filled Price vs Current Price)
+            # Determine "Price" to display (Filled Price vs Current Price)
+            display_price = 0.0
+            status = trade.orderStatus.status
+            
+            # Helper to find active ticker by symbol AND auto-subscribe if missing
+            def get_active_ticker(symbol):
+                # 1. Try to find existing streamer
+                for t in self.ib.tickers():
+                    if t.contract.symbol == symbol:
+                        return t
+                
+                # 2. If not found, subscribe (Auto-Recovery for manual/TWS orders)
+                print(f"DEBUG: Auto-subscribing to {symbol} found in Orders")
+                c = Stock(symbol, 'SMART', 'USD')
+                self.ib.reqMktData(c, '', False, False)
+                return None # Will be available next tick
+
+            if status == 'Filled':
+                 display_price = trade.orderStatus.avgFillPrice
+                 # Fallback if avgFillPrice is 0 (paper trading quirk)
+                 if display_price == 0.0:
+                      t = get_active_ticker(trade.contract.symbol)
+                      if t: display_price = t.marketPrice()
+            elif status in ['Submitted', 'PreSubmitted', 'PendingSubmit', 'ApiPending']:
+                 # Pending: Show live price
+                 t = get_active_ticker(trade.contract.symbol)
+                 if t: display_price = t.marketPrice()
+            else:
+                 # Cancelled, Inactive, etc -> 0.0
+                 display_price = 0.0
+
+            # Handle NaN prices (IBKR sometimes returns NaN)
+            if display_price != display_price: 
+                display_price = 0.0
+            else:
+                 # Cancelled, Inactive, etc -> 0.0
+                 display_price = 0.0
+                     
             orders_data.append({
                 "id": trade.order.orderId,
                 "time": trade.log[-1].time.strftime("%H:%M:%S") if trade.log else "-",
@@ -252,7 +322,8 @@ class IBIntegration:
                 "filled_qty": trade.orderStatus.filled,
                 "price": trade.order.lmtPrice if trade.order.orderType in ['LIMIT', 'LMT'] else 0.0,
                 "avg_fill_price": trade.orderStatus.avgFillPrice,
-                "status": trade.orderStatus.status,
+                "current_or_filled_price": display_price,
+                "status": status,
                 "type": trade.order.orderType
             })
         
