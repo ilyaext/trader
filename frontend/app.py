@@ -93,8 +93,21 @@ with tab1:
                         'Qty', 'Avg Price', 'Total P/L $', 'Total P/L %', 'Mkt Value'
                     ]
                     
+                    # Apply color styling
+                    def color_pnl(val):
+                        try:
+                            # Handle potential non-numeric types if any, though we expect floats
+                            v = float(val)
+                            if v > 0: return 'color: green'
+                            elif v < 0: return 'color: red'
+                            return ''
+                        except:
+                            return ''
+
+                    styled_df = display_df.style.map(color_pnl, subset=['P/L %', 'P/L $', 'Total P/L $', 'Total P/L %'])
+                    
                     st.dataframe(
-                        display_df,
+                        styled_df,
                         column_config={
                             "P/L %": st.column_config.NumberColumn(
                                 "P/L %",
