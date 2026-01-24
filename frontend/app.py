@@ -44,19 +44,21 @@ with tab1:
                 if portfolio:
                     df = pd.DataFrame(portfolio)
                     
-                    # Columns: ticker, quantity, avg_cost, market_price, market_value, unrealized_pnl, realized_pnl, pnl_percent
-                    df['P/L $'] = df['unrealized_pnl']
-                    df['P/L %'] = df['pnl_percent']
+                    # Columns: ticker, quantity, avg_cost, market_price, market_value, unrealized_pnl, realized_pnl, pnl_percent, today_pnl, today_pnl_pct
+                    df['Total P/L $'] = df['unrealized_pnl']
+                    df['Total P/L %'] = df['pnl_percent']
+                    df['P/L $'] = df['today_pnl']
+                    df['P/L %'] = df['today_pnl_pct']
                     
-                    # Select and Order Columns
+                    # Select and Order Columns: Ticker, P/L %, P/L $, Cur. Price, Qty, Avg Price, Total P/L $, Total P/L %, Mkt Value
                     display_df = df[[
-                        'ticker', 'quantity', 'avg_cost', 
-                        'market_price', 'P/L %', 'P/L $', 'market_value'
+                        'ticker', 'P/L %', 'P/L $', 'market_price', 
+                        'quantity', 'avg_cost', 'Total P/L $', 'Total P/L %', 'market_value'
                     ]].copy()
                     
                     display_df.columns = [
-                        'Ticker', 'Qty', 'Avg Price', 
-                        'Cur. Price', 'P/L %', 'P/L $', 'Mkt Value'
+                        'Ticker', 'P/L %', 'P/L $', 'Cur. Price', 
+                        'Qty', 'Avg Price', 'Total P/L $', 'Total P/L %', 'Mkt Value'
                     ]
                     
                     st.dataframe(
@@ -68,6 +70,14 @@ with tab1:
                             ),
                             "P/L $": st.column_config.NumberColumn(
                                 "P/L $",
+                                format="$%.2f",
+                            ),
+                            "Total P/L %": st.column_config.NumberColumn(
+                                "Total P/L %",
+                                format="%.2f%%",
+                            ),
+                            "Total P/L $": st.column_config.NumberColumn(
+                                "Total P/L $",
                                 format="$%.2f",
                             ),
                             "Mkt Value": st.column_config.NumberColumn(

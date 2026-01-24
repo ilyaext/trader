@@ -247,12 +247,36 @@ class IBIntegration:
         self.price_callbacks.append(callback)
 
     def get_portfolio(self):
-        """Returns the current portfolio items"""
+        """Returns the current portfolio items with detailed P&L"""
         if not self.check_connection:
             return []
             
         portfolio_items = []
         for item in self.ib.portfolio():
+            # Find the contract ticker to get Previous Close
+            ticker = None
+            for t in self.ib.tickers():
+                if t.contract.conId == item.contract.conId:
+                    ticker = t
+                    break
+            
+            # Fallback look up by symbol if conId match fails
+            if not ticker:
+                 for t in self.ib.tickers():
+                    if t.contract.symbol == item.contract.symbol:
+                        ticker = t
+                        break
+
+            # Calculate Today's P&L
+            # Today P&L = (Market Price - Previous Close) * Position
+            today_pnl = 0.0
+            today_pnl_pct = 0.0
+            if ticker and ticker.close:
+                 # Check for valid close price
+                 if ticker.close > 0:
+                      today_pnl = (item.marketPrice - ticker.close) * item.position
+                      today_pnl_pct = (item.marketPrice - ticker.close) / ticker.close * 100
+            
             portfolio_items.append({
                 "ticker": item.contract.symbol,
                 "quantity": item.position,
@@ -261,6 +285,8 @@ class IBIntegration:
                 "market_value": item.marketValue,
                 "unrealized_pnl": item.unrealizedPNL,
                 "realized_pnl": item.realizedPNL,
+                "today_pnl": today_pnl,
+                "today_pnl_pct": today_pnl_pct, # New field
                 "account": item.account
             })
         return portfolio_items

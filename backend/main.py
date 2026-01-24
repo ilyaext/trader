@@ -333,6 +333,8 @@ async def get_portfolio():
         item['market_price'] = market_price
         item['unrealized_pnl'] = safe_float(item['unrealized_pnl'])
         item['realized_pnl'] = safe_float(item['realized_pnl'])
+        item['today_pnl'] = safe_float(item.get('today_pnl', 0.0))
+        item['today_pnl_pct'] = safe_float(item.get('today_pnl_pct', 0.0))
         
         pnl_pct = 0.0
         if avg_cost > 0:
