@@ -21,6 +21,14 @@ ib_service = live_ib_service
 # In-memory storage for strategies (for now)
 strategies = []
 strategy_lock = None # Will be initialized in lifespan
+from collections import deque
+strategy_logs = deque(maxlen=50) # Keep last 50 logs
+
+def log_strategy_event(msg: str):
+    """Log an event to the global buffer"""
+    timestamp = datetime.now().strftime("%H:%M:%S")
+    strategy_logs.appendleft(f"[{timestamp}] {msg}")
+    print(f"STRATEGY LOG: {msg}")
 
 async def on_price_update(ticker):
     """Callback triggered by ib_service when price updates"""
@@ -76,7 +84,7 @@ async def on_price_update(ticker):
                 # BREAKOUT STRATEGY LOGIC:
                 # If Price > Entry Alert (Entry Price), Place Buy Limit Order
                 if price > strategy.entry_price:
-                    print(f"🚀 TRIGGER: {strategy.ticker} Price {price} > Entry {strategy.entry_price}. Placing Order!")
+                    log_strategy_event(f"🚀 TRIGGER: {strategy.ticker} Price {price:.2f} > Entry {strategy.entry_price:.2f}. Placing Order!")
                     try:
                         # Place Limit Order at Entry Price (or Price? User said "limit equals to Entry Alert")
                         # "create buy limit order with limit equals to Entry Alert"
@@ -85,15 +93,16 @@ async def on_price_update(ticker):
                             "BUY", 
                             strategy.quantity, 
                             order_type="LIMIT", 
-                            limit_price=strategy.entry_price
+                            limit_price=strategy.entry_price,
+                            stop_loss_price=strategy.stop_loss
                         ))
                         
                         # Mark as executed to prevent double-firing
                         strategy.status = "executed"
                         strategy.is_live = False # Stop monitoring
-                        print(f"✅ Strategy {strategy.ticker} EXECUTED.")
+                        log_strategy_event(f"✅ Strategy {strategy.ticker} EXECUTED.")
                     except Exception as e:
-                        print(f"❌ Failed to execute strategy {strategy.ticker}: {e}")
+                        log_strategy_event(f"❌ Failed to execute strategy {strategy.ticker}: {e}")
             # print(f"DEBUG: {strategy.ticker} Price={price} Entry={strategy.entry_price}")
 
 @asynccontextmanager
@@ -308,6 +317,11 @@ async def list_positions():
             
     return positions_data 
 
+@app.get("/logs")
+async def get_logs():
+    """Return recent strategy logs"""
+    return list(strategy_logs)
+
 @app.get("/portfolio")
 async def get_portfolio():
     if not ib_service.check_connection:
@@ -361,9 +375,16 @@ async def get_portfolio():
             
         item['pnl_percent'] = pnl_pct
         
-        # Determine strict "Purchased Date" -> Not available in portfolio()
-        # We will leave it as None or handle in frontend
-        item['purchased_date'] = None
+        # Format Fill Date
+        lfd = item.get('last_fill_date')
+        if lfd:
+             # Check if it's already a string or datetime
+             if hasattr(lfd, 'strftime'):
+                 item['last_fill_date'] = lfd.strftime("%Y-%m-%d %H:%M:%S")
+             else:
+                 item['last_fill_date'] = str(lfd)
+        else:
+             item['last_fill_date'] = "-"
         
     return portfolio 
 

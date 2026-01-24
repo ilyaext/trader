@@ -63,6 +63,7 @@ if "ticker" not in st.session_state:
     st.session_state.ticker = "SPY"
 
 # --- Main Content ---
+# --- Main Content ---
 tab1, tab2, tab3 = st.tabs(["Trading", "Historical Data", "Strategy Agent"])
 
 with tab1:
@@ -84,16 +85,17 @@ with tab1:
                     df['Stop Price'] = df['stop_loss']
                     df['Distance'] = df['distance_to_stop']
                     df['Risk'] = df['risk_amount']
+                    df['Fill Date'] = df['last_fill_date']
                     
-                    # Select and Order Columns: Ticker, P/L %, P/L $, Cur. Price, Qty, Avg Price, Stop Price, Distance, Risk, Total P/L $, Total P/L %, Mkt Value
+                    # Select and Order Columns: Ticker, P/L %, P/L $, Cur. Price, Qty, Avg Price, Stop Price, Distance, Risk, Total P/L $, Total P/L %, Mkt Value, Fill Date
                     display_df = df[[
                         'ticker', 'P/L %', 'P/L $', 'market_price', 
-                        'quantity', 'avg_cost', 'Stop Price', 'Distance', 'Risk', 'Total P/L $', 'Total P/L %', 'market_value'
+                        'quantity', 'avg_cost', 'Stop Price', 'Distance', 'Risk', 'Total P/L $', 'Total P/L %', 'market_value', 'Fill Date'
                     ]].copy()
                     
                     display_df.columns = [
                         'Ticker', 'P/L %', 'P/L $', 'Cur. Price', 
-                        'Qty', 'Avg Price', 'Stop Price', 'Distance', 'Risk', 'Total P/L $', 'Total P/L %', 'Mkt Value'
+                        'Qty', 'Avg Price', 'Stop Price', 'Distance', 'Risk', 'Total P/L $', 'Total P/L %', 'Mkt Value', 'Fill Date'
                     ]
                     
                     # Apply color styling
@@ -124,6 +126,7 @@ with tab1:
                         'Mkt Value': "${:.2f}",
                         'Qty': "{:.0f}"
                     })
+                    # Fill Date is string, no special formatting needed in st.dataframe or styler beyond default
                     
                     st.dataframe(
                         styled_df,
@@ -138,6 +141,7 @@ with tab1:
                             "Stop Price": st.column_config.NumberColumn("Stop Price", format="$%.2f"),
                             "Distance": st.column_config.NumberColumn("Distance", format="$%.2f"),
                             "Risk": st.column_config.NumberColumn("Risk", format="$%.2f"),
+                            "Fill Date": st.column_config.TextColumn("Fill Date"),
                             "Qty": st.column_config.NumberColumn("Qty", format="%d"),
                         },
                         hide_index=True,
@@ -409,7 +413,16 @@ with tab3:
 
     st.markdown("---")
 
+    # --- TAB 3: Strategy Agent ---
+    with tab3:
+        @st.fragment(run_every=2)
+        def render_strategy_agent():
+            # User requested to remove all UI elements from this view
+            pass
 
-# --- Live Loop (Manual Refresh fallback) ---
-if st.sidebar.button("Refresh Price"):
-    st.rerun()
+        render_strategy_agent()
+
+
+
+
+

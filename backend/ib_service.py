@@ -38,6 +38,13 @@ class IBIntegration:
                 logger.info("Connected to IBKR")
             except Exception as e:
                 logger.error(f"Could not connect to IBKR: {e}")
+            
+            # Request executions to populate fills (current day)
+            try:
+                await self.ib.reqExecutionsAsync()
+                logger.info("Requested execution history")
+            except Exception as e:
+                logger.error(f"Error requesting executions: {e}")
                 
     @property
     def check_connection(self):
@@ -311,6 +318,17 @@ class IBIntegration:
                         if o.orderType in ['STP', 'TRAIL', 'STP LMT']:
                              stop_loss_price = o.auxPrice
 
+            # Find Last Fill Date
+            last_fill_date = None
+            # fills() are populated by reqExecutions() or real-time trades
+            # Filter fills for this contract
+            relevant_fills = [f for f in self.ib.fills() if f.contract.conId == item.contract.conId]
+            if relevant_fills:
+                # Sort by time desc
+                relevant_fills.sort(key=lambda x: x.time, reverse=True)
+                # Format time
+                last_fill_date = relevant_fills[0].time
+
             portfolio_items.append({
                 "ticker": item.contract.symbol,
                 "quantity": item.position,
@@ -321,7 +339,8 @@ class IBIntegration:
                 "realized_pnl": item.realizedPNL,
                 "today_pnl": today_pnl,
                 "today_pnl_pct": today_pnl_pct,
-                "stop_loss": stop_loss_price, # New field
+                "stop_loss": stop_loss_price,
+                "last_fill_date": last_fill_date, # New field
                 "account": item.account
             })
         return portfolio_items
