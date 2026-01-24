@@ -34,6 +34,69 @@ ticker = st.sidebar.text_input("Ticker Symbol", value="SPY").strip().upper()
 tab1, tab2, tab3 = st.tabs(["Trading", "Historical Data", "Strategy Agent"])
 
 with tab1:
+    @st.fragment(run_every=5)
+    def render_portfolio():
+        st.subheader("Current Positions")
+        try:
+            port_res = requests.get(f"{ST_BACKEND_URL}/portfolio")
+            if port_res.status_code == 200:
+                portfolio = port_res.json()
+                if portfolio:
+                    df = pd.DataFrame(portfolio)
+                    
+                    # Columns: ticker, quantity, avg_cost, market_price, market_value, unrealized_pnl, realized_pnl, pnl_percent
+                    df['P/L $'] = df['unrealized_pnl']
+                    df['P/L %'] = df['pnl_percent']
+                    
+                    # Select and Order Columns
+                    display_df = df[[
+                        'ticker', 'quantity', 'avg_cost', 
+                        'market_price', 'P/L %', 'P/L $', 'market_value'
+                    ]].copy()
+                    
+                    display_df.columns = [
+                        'Ticker', 'Qty', 'Avg Price', 
+                        'Cur. Price', 'P/L %', 'P/L $', 'Mkt Value'
+                    ]
+                    
+                    st.dataframe(
+                        display_df,
+                        column_config={
+                            "P/L %": st.column_config.NumberColumn(
+                                "P/L %",
+                                format="%.2f%%",
+                            ),
+                            "P/L $": st.column_config.NumberColumn(
+                                "P/L $",
+                                format="$%.2f",
+                            ),
+                            "Mkt Value": st.column_config.NumberColumn(
+                                "Mkt Value",
+                                format="$%.2f",
+                            ),
+                            "Avg Price": st.column_config.NumberColumn(
+                                "Avg Price",
+                                format="$%.2f",
+                            ),
+                             "Cur. Price": st.column_config.NumberColumn(
+                                "Cur. Price",
+                                format="$%.2f",
+                            ),
+                        },
+                        hide_index=True,
+                        use_container_width=True
+                    )
+                else:
+                    st.info("No open positions.")
+            else:
+                st.error("Failed to fetch portfolio data")
+        except Exception as e:
+            st.error(f"Error: {e}")
+
+    render_portfolio()
+
+    st.markdown("---")
+
     @st.fragment(run_every=2)
     def render_orders():
          st.subheader("Orders")

@@ -246,6 +246,25 @@ class IBIntegration:
     def register_callback(self, callback):
         self.price_callbacks.append(callback)
 
+    def get_portfolio(self):
+        """Returns the current portfolio items"""
+        if not self.check_connection:
+            return []
+            
+        portfolio_items = []
+        for item in self.ib.portfolio():
+            portfolio_items.append({
+                "ticker": item.contract.symbol,
+                "quantity": item.position,
+                "avg_cost": item.averageCost,
+                "market_price": item.marketPrice,
+                "market_value": item.marketValue,
+                "unrealized_pnl": item.unrealizedPNL,
+                "realized_pnl": item.realizedPNL,
+                "account": item.account
+            })
+        return portfolio_items
+
     def get_today_orders(self):
         """Returns all orders (active and executed) for the current session"""
         if not self.check_connection:

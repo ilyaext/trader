@@ -308,6 +308,44 @@ async def list_positions():
             
     return positions_data 
 
+@app.get("/portfolio")
+async def get_portfolio():
+    if not ib_service.check_connection:
+        return []
+        
+    portfolio = ib_service.get_portfolio()
+    
+    # Helper to safely get float
+    def safe_float(val):
+        try:
+            f = float(val)
+            return f if f == f else 0.0 # Check for NaN
+        except:
+            return 0.0
+
+    # Enrich with calculated fields if needed, though most come from IB
+    for item in portfolio:
+        avg_cost = safe_float(item['avg_cost'])
+        market_price = safe_float(item['market_price'])
+        
+        # Ensure item has safe values for JSON
+        item['avg_cost'] = avg_cost
+        item['market_price'] = market_price
+        item['unrealized_pnl'] = safe_float(item['unrealized_pnl'])
+        item['realized_pnl'] = safe_float(item['realized_pnl'])
+        
+        pnl_pct = 0.0
+        if avg_cost > 0:
+            pnl_pct = (market_price - avg_cost) / avg_cost * 100
+            
+        item['pnl_percent'] = pnl_pct
+        
+        # Determine strict "Purchased Date" -> Not available in portfolio()
+        # We will leave it as None or handle in frontend
+        item['purchased_date'] = None
+        
+    return portfolio 
+
 
 class OrderRequest(BaseModel):
     ticker: str
