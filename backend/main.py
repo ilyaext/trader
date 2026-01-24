@@ -323,10 +323,12 @@ async def get_portfolio():
         except:
             return 0.0
 
-    # Enrich with calculated fields if needed, though most come from IB
+    # Enrich with calculated fields
     for item in portfolio:
         avg_cost = safe_float(item['avg_cost'])
         market_price = safe_float(item['market_price'])
+        quantity = safe_float(item['quantity'])
+        stop_loss = safe_float(item.get('stop_loss', 0.0))
         
         # Ensure item has safe values for JSON
         item['avg_cost'] = avg_cost
@@ -335,6 +337,23 @@ async def get_portfolio():
         item['realized_pnl'] = safe_float(item['realized_pnl'])
         item['today_pnl'] = safe_float(item.get('today_pnl', 0.0))
         item['today_pnl_pct'] = safe_float(item.get('today_pnl_pct', 0.0))
+        item['stop_loss'] = stop_loss
+        
+        # New Metrics: Distance and Risk
+        item['distance_to_stop'] = 0.0
+        item['risk_amount'] = 0.0
+        
+        if stop_loss > 0 and quantity != 0:
+             # Distance: Current - Stop (assuming Long, so positive distance usually)
+             item['distance_to_stop'] = market_price - stop_loss
+             
+             # Risk: (Stop - AvgPrice) * Qty (Negative value indicates potential loss)
+             # Or (Stop - Current) * Qty? Usually Risk is from Entry/AvgCost.
+             # User asked "potential P/L amount if will exist buy stop loss" -> likely if stop hit from HERE or from Cost?
+             # Standard definition is Risk from Cost. But "potential P/L amount" implies result of closing trade.
+             # If sold at stop_loss, P/L = (Stop - AvgCost) * Qty.
+             item['risk_amount'] = (stop_loss - avg_cost) * quantity
+        
         
         pnl_pct = 0.0
         if avg_cost > 0:

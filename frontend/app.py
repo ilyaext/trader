@@ -76,21 +76,24 @@ with tab1:
                 if portfolio:
                     df = pd.DataFrame(portfolio)
                     
-                    # Columns: ticker, quantity, avg_cost, market_price, market_value, unrealized_pnl, realized_pnl, pnl_percent, today_pnl, today_pnl_pct
+                    # Columns: ticker, quantity, avg_cost, market_price, market_value, unrealized_pnl, realized_pnl, pnl_percent, today_pnl, today_pnl_pct, stop_loss, distance_to_stop, risk_amount
                     df['Total P/L $'] = df['unrealized_pnl']
                     df['Total P/L %'] = df['pnl_percent']
                     df['P/L $'] = df['today_pnl']
                     df['P/L %'] = df['today_pnl_pct']
+                    df['Stop Price'] = df['stop_loss']
+                    df['Distance'] = df['distance_to_stop']
+                    df['Risk'] = df['risk_amount']
                     
-                    # Select and Order Columns: Ticker, P/L %, P/L $, Cur. Price, Qty, Avg Price, Total P/L $, Total P/L %, Mkt Value
+                    # Select and Order Columns: Ticker, P/L %, P/L $, Cur. Price, Qty, Avg Price, Stop Price, Distance, Risk, Total P/L $, Total P/L %, Mkt Value
                     display_df = df[[
                         'ticker', 'P/L %', 'P/L $', 'market_price', 
-                        'quantity', 'avg_cost', 'Total P/L $', 'Total P/L %', 'market_value'
+                        'quantity', 'avg_cost', 'Stop Price', 'Distance', 'Risk', 'Total P/L $', 'Total P/L %', 'market_value'
                     ]].copy()
                     
                     display_df.columns = [
                         'Ticker', 'P/L %', 'P/L $', 'Cur. Price', 
-                        'Qty', 'Avg Price', 'Total P/L $', 'Total P/L %', 'Mkt Value'
+                        'Qty', 'Avg Price', 'Stop Price', 'Distance', 'Risk', 'Total P/L $', 'Total P/L %', 'Mkt Value'
                     ]
                     
                     # Apply color styling
@@ -104,39 +107,21 @@ with tab1:
                         except:
                             return ''
 
-                    styled_df = display_df.style.map(color_pnl, subset=['P/L %', 'P/L $', 'Total P/L $', 'Total P/L %'])
+                    styled_df = display_df.style.map(color_pnl, subset=['P/L %', 'P/L $', 'Total P/L $', 'Total P/L %', 'Risk'])
                     
                     st.dataframe(
                         styled_df,
                         column_config={
-                            "P/L %": st.column_config.NumberColumn(
-                                "P/L %",
-                                format="%.2f%%",
-                            ),
-                            "P/L $": st.column_config.NumberColumn(
-                                "P/L $",
-                                format="$%.2f",
-                            ),
-                            "Total P/L %": st.column_config.NumberColumn(
-                                "Total P/L %",
-                                format="%.2f%%",
-                            ),
-                            "Total P/L $": st.column_config.NumberColumn(
-                                "Total P/L $",
-                                format="$%.2f",
-                            ),
-                            "Mkt Value": st.column_config.NumberColumn(
-                                "Mkt Value",
-                                format="$%.2f",
-                            ),
-                            "Avg Price": st.column_config.NumberColumn(
-                                "Avg Price",
-                                format="$%.2f",
-                            ),
-                             "Cur. Price": st.column_config.NumberColumn(
-                                "Cur. Price",
-                                format="$%.2f",
-                            ),
+                            "P/L %": st.column_config.NumberColumn("P/L %", format="%.2f%%"),
+                            "P/L $": st.column_config.NumberColumn("P/L $", format="$%.2f"),
+                            "Total P/L %": st.column_config.NumberColumn("Total P/L %", format="%.2f%%"),
+                            "Total P/L $": st.column_config.NumberColumn("Total P/L $", format="$%.2f"),
+                            "Mkt Value": st.column_config.NumberColumn("Mkt Value", format="$%.2f"),
+                            "Avg Price": st.column_config.NumberColumn("Avg Price", format="$%.2f"),
+                            "Cur. Price": st.column_config.NumberColumn("Cur. Price", format="$%.2f"),
+                            "Stop Price": st.column_config.NumberColumn("Stop Price", format="$%.2f"),
+                            "Distance": st.column_config.NumberColumn("Distance", format="$%.2f"),
+                            "Risk": st.column_config.NumberColumn("Risk", format="$%.2f"),
                         },
                         hide_index=True,
                         use_container_width=True
@@ -161,15 +146,17 @@ with tab1:
                   orders = orders_res.json()
                   if orders:
                       df_orders = pd.DataFrame(orders)
-                      # Rename columns for display
-                      # Rename 'current_or_filled_price' -> 'Price'
-                      # Rename 'price' -> 'Limit'
-                      df_orders.rename(columns={'current_or_filled_price': 'Price', 'price': 'Limit', 'id': 'ID', 'time': 'Time', 'ticker': 'Ticker', 'action': 'Action', 'total_qty': 'Qty', 'status': 'Status', 'type': 'Type'}, inplace=True)
+                      # Rename columns: 'current_or_filled_price' -> 'Price', 'price' -> 'Limit', 'stop_price' -> 'Stop Price'
+                      df_orders.rename(columns={
+                          'current_or_filled_price': 'Price', 
+                          'price': 'Limit', 
+                          'stop_price': 'Stop Price',
+                          'id': 'ID', 'time': 'Time', 'ticker': 'Ticker', 'action': 'Action', 'total_qty': 'Qty', 'status': 'Status', 'type': 'Type'
+                      }, inplace=True)
                       
-                      # Columns: ID, Time, Ticker, Action, Qty, Limit, Price, Status, Type
-                      # Removed 'Filled' (Qty) as requested to be replaced by Price context
+                      # Columns: ID, Time, Ticker, Action, Qty, Limit, Stop Price, Price, Status, Type
                       st.dataframe(
-                          df_orders[['ID', 'Time', 'Ticker', 'Action', 'Qty', 'Limit', 'Price', 'Status', 'Type']], 
+                          df_orders[['ID', 'Time', 'Ticker', 'Action', 'Qty', 'Limit', 'Stop Price', 'Price', 'Status', 'Type']], 
                           hide_index=True,
                           use_container_width=True
                       )

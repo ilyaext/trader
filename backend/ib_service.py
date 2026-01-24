@@ -109,18 +109,36 @@ class IBIntegration:
             print(f"DEBUG: Historical Data failed: {e}")
             raise e
 
-    async def place_order(self, ticker_symbol, action, quantity, order_type="MARKET", limit_price=0.0):
+    async def place_order(self, ticker_symbol, action, quantity, order_type="MARKET", limit_price=0.0, stop_loss_price=None):
         if not self.check_connection:
             raise Exception("IBKR not connected")
 
         contract = Stock(ticker_symbol, 'SMART', 'USD')
         
+        # Parent Order
         if order_type.upper() == "LIMIT":
-            order = LimitOrder(action, quantity, limit_price)
+            parent = LimitOrder(action, quantity, limit_price)
         else:
-            order = MarketOrder(action, quantity)
+            parent = MarketOrder(action, quantity)
         
-        trade = self.ib.placeOrder(contract, order)
+        orders_to_place = [parent]
+
+        # Stop Loss (Child)
+        if stop_loss_price and stop_loss_price > 0:
+            parent.transmit = False # Do not transmit until child is linked
+            
+            stop_action = "SELL" if action == "BUY" else "BUY"
+            child = StopOrder(stop_action, quantity, stop_loss_price)
+            child.parentId = parent.orderId
+            child.transmit = True # Transmit the whole bracket
+            orders_to_place.append(child)
+        else:
+            parent.transmit = True
+
+        trades = []
+        for o in orders_to_place:
+             t = self.ib.placeOrder(contract, o)
+             trades.append(t)
         
         # Ensure we are subscribed to market data so we can track price in Orders table
         # Check if already subscribed
@@ -134,9 +152,7 @@ class IBIntegration:
             print(f"DEBUG: Auto-subscribing to {ticker_symbol} for order tracking")
             self.ib.reqMktData(contract, '', False, False)
         
-        # Wait for fill? For Hello World, we just return the trade object
-        # In prod we would await trade.filledEvent
-        return trade
+        return trades[0] # Return parent trade
 
     async def download_historical_data(self, ticker_symbol, start_date, end_date, bar_size="1 day"):
         if not self.check_connection:
@@ -246,6 +262,7 @@ class IBIntegration:
     def register_callback(self, callback):
         self.price_callbacks.append(callback)
 
+    # - [x] Fetch Active Stop Loss for Portfolio (Backend) <!-- id: 20 -->
     def get_portfolio(self):
         """Returns the current portfolio items with detailed P&L"""
         if not self.check_connection:
@@ -277,6 +294,23 @@ class IBIntegration:
                       today_pnl = (item.marketPrice - ticker.close) * item.position
                       today_pnl_pct = (item.marketPrice - ticker.close) / ticker.close * 100
             
+            # Find Active Stop Loss for this position
+            stop_loss_price = 0.0
+            # Get all open orders for this contract
+            # We need to find the one that is a Stop Sell (assuming Long)
+            # This is a simplification; ideally we match by orderId chain, but matching by contract+action+type is decent
+            for t in self.ib.openTrades(): # openTrades returns Trade objects with order info
+                if t.contract.conId == item.contract.conId:
+                    o = t.order
+                    # Assuming Long Position -> Looking for Sell Stop
+                    # Assuming Short Position -> Looking for Buy Stop
+                    position_direction = 1 if item.position > 0 else -1
+                    order_direction = -1 if o.action == 'SELL' else 1
+                    
+                    if position_direction != order_direction: # Opposite side
+                        if o.orderType in ['STP', 'TRAIL', 'STP LMT']:
+                             stop_loss_price = o.auxPrice
+
             portfolio_items.append({
                 "ticker": item.contract.symbol,
                 "quantity": item.position,
@@ -286,7 +320,8 @@ class IBIntegration:
                 "unrealized_pnl": item.unrealizedPNL,
                 "realized_pnl": item.realizedPNL,
                 "today_pnl": today_pnl,
-                "today_pnl_pct": today_pnl_pct, # New field
+                "today_pnl_pct": today_pnl_pct,
+                "stop_loss": stop_loss_price, # New field
                 "account": item.account
             })
         return portfolio_items
@@ -347,6 +382,7 @@ class IBIntegration:
                 "total_qty": trade.order.totalQuantity,
                 "filled_qty": trade.orderStatus.filled,
                 "price": trade.order.lmtPrice if trade.order.orderType in ['LIMIT', 'LMT'] else 0.0,
+                "stop_price": trade.order.auxPrice if trade.order.orderType in ['STP', 'STOP', 'TRAIL', 'STP LMT'] else 0.0,
                 "avg_fill_price": trade.orderStatus.avgFillPrice,
                 "current_or_filled_price": display_price,
                 "status": status,
