@@ -438,4 +438,8 @@ async def get_account_summary():
     if summary:
         return summary
     return {"net_liquidation": 0.0, "total_cash": 0.0, "daily_pnl": 0.0, "daily_pnl_pct": 0.0, "status": "unavailable"}
+    return {"net_liquidation": 0.0, "total_cash": 0.0, "daily_pnl": 0.0, "daily_pnl_pct": 0.0, "status": "unavailable"}
+
+@app.get("/health")
+async def health():
     return {"status": "ok", "ib_connected": ib_service.check_connection}
