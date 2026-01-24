@@ -429,6 +429,13 @@ async def download_history(req: HistoryRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/health")
-async def health():
+@app.get("/account")
+async def get_account_summary():
+    if not ib_service.check_connection:
+        return {"net_liquidation": 0.0, "total_cash": 0.0, "daily_pnl": 0.0, "daily_pnl_pct": 0.0, "status": "disconnected"}
+    
+    summary = ib_service.get_account_summary()
+    if summary:
+        return summary
+    return {"net_liquidation": 0.0, "total_cash": 0.0, "daily_pnl": 0.0, "daily_pnl_pct": 0.0, "status": "unavailable"}
     return {"status": "ok", "ib_connected": ib_service.check_connection}

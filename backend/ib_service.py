@@ -357,4 +357,49 @@ class IBIntegration:
         orders_data.sort(key=lambda x: x['id'], reverse=True)
         return orders_data
 
+    def get_account_summary(self):
+        """Returns account summary metrics"""
+        if not self.check_connection:
+            return None
+            
+        # 1. Fetch Account Tags (NetLiquidation, TotalCashValue)
+        # We use accountValues because it's simpler for default account
+        summary = {
+            "net_liquidation": 0.0,
+            "total_cash": 0.0,
+            "daily_pnl": 0.0,
+            "daily_pnl_pct": 0.0
+        }
+        
+        try:
+             # This returns a list of AccountValue objects
+             acc_vals = self.ib.accountValues()
+             for mav in acc_vals:
+                 if mav.tag == 'NetLiquidation':
+                     try: summary['net_liquidation'] = float(mav.value)
+                     except: pass
+                 elif mav.tag == 'TotalCashValue': # or AvailableFunds
+                     try: summary['total_cash'] = float(mav.value)
+                     except: pass
+        except Exception as e:
+            logger.error(f"Error fetching account values: {e}")
+
+        # 2. Calculate Daily P&L from Portfolio
+        # Summing our own calculated daily P&L ensures consistency with the table
+        try:
+            portfolio = self.get_portfolio()
+            total_daily_pnl = sum([item.get('today_pnl', 0.0) for item in portfolio])
+            summary['daily_pnl'] = total_daily_pnl
+            
+            # Calculate % based on NetLiq (Current NetLiq includes today's P&L)
+            # So Start Equity = NetLiq - DailyPnL
+            if summary['net_liquidation'] != 0:
+                start_equity = summary['net_liquidation'] - total_daily_pnl
+                if start_equity != 0:
+                    summary['daily_pnl_pct'] = (total_daily_pnl / start_equity) * 100
+        except Exception as e:
+            logger.error(f"Error calculating daily P&L sum: {e}")
+            
+        return summary
+
 ib_service = IBIntegration()

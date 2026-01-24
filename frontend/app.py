@@ -28,7 +28,39 @@ except:
     ib_status = "Unknown"
 
 st.sidebar.markdown("---")
-ticker = st.sidebar.text_input("Ticker Symbol", value="SPY").strip().upper()
+
+# --- Account Summary (Sidebar) ---
+@st.fragment(run_every=5)
+def render_sidebar_metrics():
+    st.subheader("Account Summary")
+    try:
+        acc_res = requests.get(f"{ST_BACKEND_URL}/account")
+        if acc_res.status_code == 200:
+            data = acc_res.json()
+            
+            # Net Liquidation
+            nl = data.get('net_liquidation', 0.0)
+            st.metric("Net Liquidation", f"${nl:,.2f}")
+            
+            # Free Cash
+            cash = data.get('total_cash', 0.0)
+            st.metric("Free Cash", f"${cash:,.2f}")
+            
+            # Daily P/L
+            d_pnl = data.get('daily_pnl', 0.0)
+            d_pct = data.get('daily_pnl_pct', 0.0)
+            st.metric("Daily P/L", f"${d_pnl:,.2f}", f"{d_pct:+.2f}%")
+        else:
+            st.error("Data Unavailable")
+    except Exception as e:
+        st.error("Connection Error")
+
+with st.sidebar:
+    render_sidebar_metrics()
+
+# Initialize ticker in session state if not present (since we removed the sidebar input)
+if "ticker" not in st.session_state:
+    st.session_state.ticker = "SPY"
 
 # --- Main Content ---
 tab1, tab2, tab3 = st.tabs(["Trading", "Historical Data", "Strategy Agent"])
@@ -155,6 +187,11 @@ with tab1:
 with tab2:
     st.subheader("Download Historical Data")
     
+    # Ticker Input (Moved from Sidebar)
+    ticker = st.text_input("Ticker Symbol", value=st.session_state.ticker, key="h_ticker").strip().upper()
+    # Update session state for persistence
+    st.session_state.ticker = ticker
+    
     h_col1, h_col2, h_col3 = st.columns(3)
     with h_col1:
         start_date = st.date_input("Start Date", value=pd.to_datetime("today") - pd.Timedelta(days=7), key="h_start")
@@ -163,7 +200,7 @@ with tab2:
     with h_col3:
         bar_size = st.selectbox("Bar Size", ["1 min", "5 mins", "1 hour", "1 day"], index=0, key="h_bar")
         
-    st.caption(f"Requesting: {start_date} to {end_date} ({bar_size})")
+    st.caption(f"Requesting: {ticker} from {start_date} to {end_date} ({bar_size})")
     
     if st.button("Download Data", type="primary"):
         if ib_status != "Connected":
