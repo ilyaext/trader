@@ -36,11 +36,27 @@ async def on_price_update(ticker):
 
         # Get current price
         price = 0.0
-        if ticker.last and not float(ticker.last) != float(ticker.last): # Check NaN
-             price = ticker.last
+        # Helper to safely get float
+        def safe_float(val):
+            try:
+                f = float(val)
+                return f if f == f else 0.0 # Check for NaN
+            except:
+                return 0.0
+
+        if ticker.last and safe_float(ticker.last) > 0:
+             price = safe_float(ticker.last)
         elif ticker.marketPrice():
-             price = ticker.marketPrice()
+             mp = safe_float(ticker.marketPrice())
+             if mp > 0:
+                 price = mp
         
+        # Fallback to Close if live price is missing (e.g. weekend/simulated)
+        if price <= 0 and ticker.close:
+             cp = safe_float(ticker.close)
+             if cp > 0:
+                 price = cp
+
         if price <= 0:
             return
 
@@ -103,16 +119,20 @@ async def lifespan(app: FastAPI):
 
 async def check_connection_loop():
     while True:
-        if not ib_service.check_connection:
-            print("Detected API Disconnect. Attempting to reconnect...")
-            await ib_service.connect()
-            
-            # Re-subscribe to active strategies
-            async with strategy_lock:
-                for s in strategies:
-                    if s.status == "active":
-                        await ib_service.subscribe_market_data(s.ticker)
+        try:
+            if not ib_service.check_connection:
+                print("Detected API Disconnect. Attempting to reconnect...")
+                await ib_service.connect()
+                
+                # Re-subscribe to active strategies
+                async with strategy_lock:
+                    for s in strategies:
+                        if s.status == "active":
+                            await ib_service.subscribe_market_data(s.ticker)
                         
+        except Exception as e:
+            print(f"Error in connection loop: {e}")
+            
         await asyncio.sleep(5) # Check every 5 seconds
 
 app = FastAPI(title="Trader Bot API", lifespan=lifespan)
@@ -288,33 +308,6 @@ async def list_positions():
             
     return positions_data 
 
-@app.get("/portfolio")
-async def get_portfolio():
-    if not ib_service.check_connection:
-        return []
-        
-    portfolio = ib_service.get_portfolio()
-    
-    # Enrich with calculated fields if needed, though most come from IB
-    for item in portfolio:
-        # Calculate P&L % 
-        # (Market Value - (Avg Cost * Qty)) / (Avg Cost * Qty) * 100
-        # OR simply (Market Price - Avg Cost) / Avg Cost * 100
-        
-        avg_cost = item['avg_cost']
-        market_price = item['market_price']
-        
-        pnl_pct = 0.0
-        if avg_cost > 0:
-            pnl_pct = (market_price - avg_cost) / avg_cost * 100
-            
-        item['pnl_percent'] = pnl_pct
-        
-        # Determine strict "Purchased Date" -> Not available in portfolio()
-        # We will leave it as None or handle in frontend
-        item['purchased_date'] = None
-        
-    return portfolio 
 
 class OrderRequest(BaseModel):
     ticker: str

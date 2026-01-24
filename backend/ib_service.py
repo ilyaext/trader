@@ -13,7 +13,6 @@ class IBIntegration:
         self.host = os.getenv("IB_HOST", "127.0.0.1")
         self.port = int(os.getenv("IB_PORT", "7497"))
         self.client_id = 1
-        self.client_id = 1
         
         # Market Data Type Configuration
         # 1 = Live (Real-time, requires subscription)
@@ -243,24 +242,6 @@ class IBIntegration:
                 
         return 0.0
 
-    def get_portfolio(self):
-        """Returns the current portfolio items"""
-        if not self.check_connection:
-            return []
-            
-        portfolio_items = []
-        for item in self.ib.portfolio():
-            portfolio_items.append({
-                "ticker": item.contract.symbol,
-                "quantity": item.position,
-                "avg_cost": item.averageCost,
-                "market_price": item.marketPrice,
-                "market_value": item.marketValue,
-                "unrealized_pnl": item.unrealizedPNL,
-                "realized_pnl": item.realizedPNL,
-                "account": item.account
-            })
-        return portfolio_items
 
     def register_callback(self, callback):
         self.price_callbacks.append(callback)
