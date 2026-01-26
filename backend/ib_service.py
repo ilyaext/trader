@@ -7,44 +7,91 @@ import logging
 
 logger = logging.getLogger("IBService")
 
+import random
+
 class IBIntegration:
     def __init__(self):
         self.ib = IB()
         self.host = os.getenv("IB_HOST", "127.0.0.1")
         self.port = int(os.getenv("IB_PORT", "7497"))
-        self.client_id = 1
+        self.client_id = random.randint(2, 999) # Random ID to avoid conflicts
+        self.ib.runTimeout = 30 # Increase run timeout
+        self.ib.reqTimeout = 30 # Increase request timeout (default is 4s)
         
         # Market Data Type Configuration
         # 1 = Live (Real-time, requires subscription)
         # 2 = Frozen (Last price recorded at market close, requires subscription)
         # 3 = Delayed (15-20 min delayed, free)
         # 4 = Delayed Frozen (Last price recorded at market close, free)
-        self.market_data_type = int(os.getenv("IB_MARKET_DATA_TYPE", "4"))
+        # Default to 3 (Delayed) for better updates than 4 (Frozen)
+        self.market_data_type = int(os.getenv("IB_MARKET_DATA_TYPE", "3"))
         
         # Event Callbacks
         self.price_callbacks = []
         self.ib.pendingTickersEvent += self.on_pending_tickers
-        self.ib.orderStatusEvent += self.on_order_status
+        self.ib.disconnectedEvent += self.on_disconnected
+        self.client_id = random.randint(2, 999) 
 
     def on_order_status(self, trade):
         """Callback for real-time order updates from IBKR"""
         print(f"🔔 IBKR NOTIFICATION: Order {trade.order.orderId} Status: {trade.orderStatus.status} | Filled: {trade.orderStatus.filled}")
 
+    def on_disconnected(self):
+        print("⛔ IBKR DISCONNECTED!")
+
+    async def force_disconnect(self):
+        """Forcefully disconnect and reset state"""
+        try:
+            self.ib.disconnect()
+            await asyncio.sleep(1)
+        except Exception as e:
+            logger.error(f"Error disconnecting: {e}")
+
     async def connect(self):
-        if not self.ib.isConnected():
-            try:
-                # wait slightly before connecting to ensure gateway is up in docker
-                await self.ib.connectAsync(self.host, self.port, clientId=self.client_id)
-                logger.info("Connected to IBKR")
-            except Exception as e:
-                logger.error(f"Could not connect to IBKR: {e}")
+        if self.ib.isConnected():
+            return
+
+        logger.info("Starting connection sequence...")
+        await self.force_disconnect()
+
+        # Generate a fresh Client ID for every connection attempt
+        self.client_id = random.randint(2, 999)
+        logger.info(f"Connecting to {self.host}:{self.port} with Client ID: {self.client_id}...")
+        
+        try:
+            # MONKEYPATCH: ib_insync calls reqExecutionsAsync inside connectAsync.
+            # If TWS is busy/blocking, this fails the entire connection.
+            # We temporarily disable it to force a connection.
+            real_reqExecutionsAsync = self.ib.reqExecutionsAsync
             
-            # Request executions to populate fills (current day)
+            async def noop(*args, **kwargs):
+                logger.warning("Skipping internal execution request during connect")
+                return []
+                
+            self.ib.reqExecutionsAsync = noop
+            
+            # Connect
+            await self.ib.connectAsync(self.host, self.port, clientId=self.client_id)
+            
+            # Restore
+            self.ib.reqExecutionsAsync = real_reqExecutionsAsync
+            
+            logger.info("✅ Connected to IBKR")
+            
+            # Request Executions (Manual & Safe)
             try:
-                await self.ib.reqExecutionsAsync()
+                # Use a timeout for this specific request to avoid blocking
+                await asyncio.wait_for(self.ib.reqExecutionsAsync(), timeout=5.0)
                 logger.info("Requested execution history")
             except Exception as e:
-                logger.error(f"Error requesting executions: {e}")
+                # Log but DO NOT fail the connection
+                logger.warning(f"Could not request executions (TWS busy?): {e}")
+
+        except Exception as e:
+            import traceback
+            logger.error(f"❌ Connection failed: {e}")
+            logger.error(traceback.format_exc())
+            await self.force_disconnect()
                 
     @property
     def check_connection(self):
@@ -277,29 +324,77 @@ class IBIntegration:
             
         portfolio_items = []
         for item in self.ib.portfolio():
-            # Find the contract ticker to get Previous Close
+            # Find the contract ticker to get Previous Close and Live Price
             ticker = None
+            # Find existing ticker using conId
             for t in self.ib.tickers():
                 if t.contract.conId == item.contract.conId:
                     ticker = t
                     break
             
-            # Fallback look up by symbol if conId match fails
+            # If not found, subscribe (STREAMING)
+            # We switched back from Snapshot Polling to Streaming because Snapshot spamming might be throttling 
+            # or ineffective in sync loops.
+            # CRITICAL FIX: Ensure exchange='SMART' is used for the subscription to avoid Error 321.
             if not ticker:
+                 contract_for_sub = item.contract
+                 contract_for_sub.exchange = 'SMART'
+                 
+                 logger.info(f"Auto-subscribing to STREAM for {contract_for_sub.symbol} (ID: {contract_for_sub.conId})")
+                 
+                 self.ib.reqMarketDataType(self.market_data_type)
+                 # snapshot=False (Streaming)
+                 ticker = self.ib.reqMktData(contract_for_sub, '', False, False)
+            
+            # Double check lookup (if we just subscribed, reqMktData returns the ticker)
+            # If we had it, we have it.
+            
+            if not ticker:
+                 # Fallback by symbol
                  for t in self.ib.tickers():
                     if t.contract.symbol == item.contract.symbol:
                         ticker = t
                         break
+            
+            # DETERMINE PRICE
+            # Use Ticker's calculated market price (robust fallback) if available, otherwise item.marketPrice
+            current_price = item.marketPrice
+            
+            if ticker:
+                # Use our robust price logic (Tickers update faster than PortfolioItem sometimes)
+                # 1. Market Price (Midpoint/Last if live)
+                tp = ticker.marketPrice()
+                
+                # 2. Last Traded Price (if market closed/delayed)
+                if (tp != tp or tp == 0) and ticker.last:
+                    tp = ticker.last
+                
+                # 3. Close Price (Previous day close) 
+                if (tp != tp or tp == 0):
+                     tp = ticker.close
+                
+                if tp and tp > 0:
+                    current_price = tp
+            
+            # Use "Live" or "Delayed" data instead of "Frozen" (4) which is static
+            # 3 = Delayed (High Volume), 1 = Live
+            # Set to 3 (Delayed) if currently 4 (Frozen) to encourage updates if market is open/simulated
+            # But only call this once globally usually, but here we enforce it for these tickers.
+            # self.ib.reqMarketDataType(3) 
 
             # Calculate Today's P&L
             # Today P&L = (Market Price - Previous Close) * Position
             today_pnl = 0.0
             today_pnl_pct = 0.0
+            
+            # We need a robust "Previous Close"
+            prev_close = 0.0
             if ticker and ticker.close:
-                 # Check for valid close price
-                 if ticker.close > 0:
-                      today_pnl = (item.marketPrice - ticker.close) * item.position
-                      today_pnl_pct = (item.marketPrice - ticker.close) / ticker.close * 100
+                 prev_close = ticker.close
+            
+            if prev_close > 0 and current_price > 0:
+                 today_pnl = (current_price - prev_close) * item.position
+                 today_pnl_pct = (current_price - prev_close) / prev_close * 100
             
             # Find Active Stop Loss for this position
             stop_loss_price = 0.0
@@ -329,13 +424,19 @@ class IBIntegration:
                 # Format time
                 last_fill_date = relevant_fills[0].time
 
+            # Recalculate Unrealized P&L based on new Current Price
+            # IBKR's item.unrealizedPNL might be stale if item.marketPrice is stale
+            unrealized_pnl = item.unrealizedPNL
+            if current_price > 0 and item.averageCost > 0:
+                 unrealized_pnl = (current_price - item.averageCost) * item.position
+
             portfolio_items.append({
                 "ticker": item.contract.symbol,
                 "quantity": item.position,
                 "avg_cost": item.averageCost,
-                "market_price": item.marketPrice,
-                "market_value": item.marketValue,
-                "unrealized_pnl": item.unrealizedPNL,
+                "market_price": current_price,
+                "market_value": current_price * item.position, # Recalc market value
+                "unrealized_pnl": unrealized_pnl,
                 "realized_pnl": item.realizedPNL,
                 "today_pnl": today_pnl,
                 "today_pnl_pct": today_pnl_pct,
