@@ -18,13 +18,12 @@ class IBIntegration:
         self.ib.runTimeout = 30 # Increase run timeout
         self.ib.reqTimeout = 30 # Increase request timeout (default is 4s)
         
-        # Market Data Type Configuration
         # 1 = Live (Real-time, requires subscription)
         # 2 = Frozen (Last price recorded at market close, requires subscription)
         # 3 = Delayed (15-20 min delayed, free)
         # 4 = Delayed Frozen (Last price recorded at market close, free)
-        # Default to 3 (Delayed) for better updates than 4 (Frozen)
-        self.market_data_type = int(os.getenv("IB_MARKET_DATA_TYPE", "3"))
+        # Default to 1 (Live) since User has subscription
+        self.market_data_type = int(os.getenv("IB_MARKET_DATA_TYPE", "1"))
         
         # Event Callbacks
         self.price_callbacks = []
@@ -382,48 +381,67 @@ class IBIntegration:
             # But only call this once globally usually, but here we enforce it for these tickers.
             # self.ib.reqMarketDataType(3) 
 
+            # Find Active Stop Loss (Move Up)
+            stop_loss_price = 0.0
+            for t in self.ib.openTrades(): 
+                if t.contract.conId == item.contract.conId:
+                    o = t.order
+                    position_direction = 1 if item.position > 0 else -1
+                    order_direction = -1 if o.action == 'SELL' else 1
+                    if position_direction != order_direction and o.orderType in ['STP', 'TRAIL', 'STP LMT']:
+                             stop_loss_price = o.auxPrice
+            
+            # Find Last Fill Date (Move Up)
+            last_fill_date = None
+            relevant_fills = [f for f in self.ib.fills() if f.contract.conId == item.contract.conId]
+            if relevant_fills:
+                relevant_fills.sort(key=lambda x: x.time, reverse=True)
+                last_fill_date = relevant_fills[0].time
+
             # Calculate Today's P&L
-            # Today P&L = (Market Price - Previous Close) * Position
+            # Logic: If bought TODAY, Today's P/L = (Price - AvgCost) [Same as Unrealized]
+            #        If bought BEFORE, Today's P/L = (Price - PrevClose)
             today_pnl = 0.0
             today_pnl_pct = 0.0
             
-            # We need a robust "Previous Close"
-            prev_close = 0.0
+            # Determine Baseline Price
+            baseline_price = 0.0
+            
+            is_new_position = False
+            if last_fill_date:
+                # Compare fill date with today's date
+                # relevant_fills[0].time is typically a datetime object (localized?)
+                # We need to be careful with timezones, but date() comparison usually works if both are reasonably aligned.
+                try:
+                    fill_date = last_fill_date.date()
+                    today_date = datetime.now().date()
+                    if fill_date == today_date:
+                        is_new_position = True
+                except:
+                    pass
+
+            if is_new_position:
+                # If new, baseline is the cost of the position
+                baseline_price = item.averageCost
+            else:
+                # If old, baseline is yesterday's close
+                if ticker and ticker.close:
+                    baseline_price = ticker.close
+            
+            # Calculate Personal Today's P/L $
+            if baseline_price > 0 and current_price > 0:
+                 today_pnl = (current_price - baseline_price) * item.position
+                 
+            # Calculate Market Daily Change % (User requested this to be independent of order)
+            # Always (Current - PrevClose) / PrevClose
+            # We need a robust "Previous Close" separately from baseline logic
+            prev_close_for_pct = 0.0
             if ticker and ticker.close:
-                 prev_close = ticker.close
+                 prev_close_for_pct = ticker.close
             
-            if prev_close > 0 and current_price > 0:
-                 today_pnl = (current_price - prev_close) * item.position
-                 today_pnl_pct = (current_price - prev_close) / prev_close * 100
-            
-            # Find Active Stop Loss for this position
-            stop_loss_price = 0.0
-            # Get all open orders for this contract
-            # We need to find the one that is a Stop Sell (assuming Long)
-            # This is a simplification; ideally we match by orderId chain, but matching by contract+action+type is decent
-            for t in self.ib.openTrades(): # openTrades returns Trade objects with order info
-                if t.contract.conId == item.contract.conId:
-                    o = t.order
-                    # Assuming Long Position -> Looking for Sell Stop
-                    # Assuming Short Position -> Looking for Buy Stop
-                    position_direction = 1 if item.position > 0 else -1
-                    order_direction = -1 if o.action == 'SELL' else 1
-                    
-                    if position_direction != order_direction: # Opposite side
-                        if o.orderType in ['STP', 'TRAIL', 'STP LMT']:
-                             stop_loss_price = o.auxPrice
-
-            # Find Last Fill Date
-            last_fill_date = None
-            # fills() are populated by reqExecutions() or real-time trades
-            # Filter fills for this contract
-            relevant_fills = [f for f in self.ib.fills() if f.contract.conId == item.contract.conId]
-            if relevant_fills:
-                # Sort by time desc
-                relevant_fills.sort(key=lambda x: x.time, reverse=True)
-                # Format time
-                last_fill_date = relevant_fills[0].time
-
+            if prev_close_for_pct > 0 and current_price > 0:
+                today_pnl_pct = (current_price - prev_close_for_pct) / prev_close_for_pct * 100
+             
             # Recalculate Unrealized P&L based on new Current Price
             # IBKR's item.unrealizedPNL might be stale if item.marketPrice is stale
             unrealized_pnl = item.unrealizedPNL

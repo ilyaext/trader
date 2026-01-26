@@ -81,20 +81,20 @@ with tab1:
                     df['Total P/L $'] = df['unrealized_pnl']
                     df['Total P/L %'] = df['pnl_percent']
                     df['P/L $'] = df['today_pnl']
-                    df['P/L %'] = df['today_pnl_pct']
+                    df['CHG %'] = df['today_pnl_pct']
                     df['Stop Price'] = df['stop_loss']
                     df['Distance'] = df['distance_to_stop']
                     df['Risk'] = df['risk_amount']
                     df['Fill Date'] = df['last_fill_date']
                     
-                    # Select and Order Columns: Ticker, P/L %, P/L $, Cur. Price, Qty, Avg Price, Stop Price, Distance, Risk, Total P/L $, Total P/L %, Mkt Value, Fill Date
+                    # Select and Order Columns: Ticker, CHG %, P/L $, Cur. Price, Qty, Avg Price, Stop Price, Distance, Risk, Total P/L $, Total P/L %, Mkt Value, Fill Date
                     display_df = df[[
-                        'ticker', 'P/L %', 'P/L $', 'market_price', 
+                        'ticker', 'CHG %', 'P/L $', 'market_price', 
                         'quantity', 'avg_cost', 'Stop Price', 'Distance', 'Risk', 'Total P/L $', 'Total P/L %', 'market_value', 'Fill Date'
                     ]].copy()
                     
                     display_df.columns = [
-                        'Ticker', 'P/L %', 'P/L $', 'Cur. Price', 
+                        'Ticker', 'CHG %', 'P/L $', 'Cur. Price', 
                         'Qty', 'Avg Price', 'Stop Price', 'Distance', 'Risk', 'Total P/L $', 'Total P/L %', 'Mkt Value', 'Fill Date'
                     ]
                     
@@ -109,12 +109,12 @@ with tab1:
                         except:
                             return ''
 
-                    styled_df = display_df.style.map(color_pnl, subset=['P/L %', 'P/L $', 'Total P/L $', 'Total P/L %', 'Risk'])
+                    styled_df = display_df.style.map(color_pnl, subset=['CHG %', 'P/L $', 'Total P/L $', 'Total P/L %', 'Risk'])
                     
                     # Apply formatting directly to Styler to ensure it renders correctly
                     # (Streamlit column_config can be overridden by Styler)
                     styled_df = styled_df.format({
-                        'P/L %': "{:.2f}%", 
+                        'CHG %': "{:.2f}%", 
                         'P/L $': "${:.2f}",
                         'Cur. Price': "${:.2f}",
                         'Avg Price': "${:.2f}",
@@ -131,7 +131,7 @@ with tab1:
                     st.dataframe(
                         styled_df,
                         column_config={
-                            "P/L %": st.column_config.NumberColumn("P/L %", format="%.2f%%"),
+                            "CHG %": st.column_config.NumberColumn("CHG %", format="%.2f%%"),
                             "P/L $": st.column_config.NumberColumn("P/L $", format="$%.2f"),
                             "Total P/L %": st.column_config.NumberColumn("Total P/L %", format="%.2f%%"),
                             "Total P/L $": st.column_config.NumberColumn("Total P/L $", format="$%.2f"),
