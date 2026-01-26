@@ -10,8 +10,8 @@ services:
       - IB_PORT=7497 # Paper trading port
       # Market Data Type:
       # 1=Live, 2=Frozen, 3=Delayed, 4=Delayed Frozen
-      # Use 3 or 4 for free/paper accounts without subscriptions.
-      - IB_MARKET_DATA_TYPE=1
+      # Use 2 (Frozen) to get Live data during RTH and Static Close after hours.
+      - IB_MARKET_DATA_TYPE=2
       # TRADING_MODE: live or simulation
 
       - POSTGRES_SERVER=db

@@ -22,8 +22,8 @@ class IBIntegration:
         # 2 = Frozen (Last price recorded at market close, requires subscription)
         # 3 = Delayed (15-20 min delayed, free)
         # 4 = Delayed Frozen (Last price recorded at market close, free)
-        # Default to 1 (Live) since User has subscription
-        self.market_data_type = int(os.getenv("IB_MARKET_DATA_TYPE", "1"))
+        # Default to 2 (Frozen) to match user preference for Static Close
+        self.market_data_type = int(os.getenv("IB_MARKET_DATA_TYPE", "2"))
         
         # Event Callbacks
         self.price_callbacks = []
@@ -360,20 +360,20 @@ class IBIntegration:
             current_price = item.marketPrice
             
             if ticker:
-                # Use our robust price logic (Tickers update faster than PortfolioItem sometimes)
-                # 1. Market Price (Midpoint/Last if live)
-                tp = ticker.marketPrice()
+                # Use our robust price logic 
+                # CHANGE: Prioritize LAST price (matches TradingView/Brokers) over Midpoint (marketPrice)
                 
-                # 2. Last Traded Price (if market closed/delayed)
-                if (tp != tp or tp == 0) and ticker.last:
-                    tp = ticker.last
+                # 1. Last Traded Price (Primary)
+                if ticker.last and ticker.last > 0 and ticker.last == ticker.last: # Check Valid and not NaN
+                     current_price = ticker.last
                 
-                # 3. Close Price (Previous day close) 
-                if (tp != tp or tp == 0):
-                     tp = ticker.close
+                # 2. Market Price (Midpoint fallback if Last is missing)
+                elif ticker.marketPrice() and ticker.marketPrice() > 0:
+                     current_price = ticker.marketPrice()
                 
-                if tp and tp > 0:
-                    current_price = tp
+                # 3. Close Price (Previous day close fallback) 
+                elif ticker.close and ticker.close > 0:
+                     current_price = ticker.close
             
             # Use "Live" or "Delayed" data instead of "Frozen" (4) which is static
             # 3 = Delayed (High Volume), 1 = Live
@@ -447,6 +447,14 @@ class IBIntegration:
             unrealized_pnl = item.unrealizedPNL
             if current_price > 0 and item.averageCost > 0:
                  unrealized_pnl = (current_price - item.averageCost) * item.position
+            
+            # DEBUG DATA DISCREPANCY
+            t_last = ticker.last if ticker else 'N/A'
+            t_close = ticker.close if ticker else 'N/A' 
+            t_bid = ticker.bid if ticker else 'N/A'
+            t_ask = ticker.ask if ticker else 'N/A'
+            t_mp = ticker.marketPrice() if ticker else 'N/A'
+            print(f"DEBUG PRICE: {item.contract.symbol} | Used={current_price} | CalcMP={t_mp} | Last={t_last} | Close={t_close} | Bid={t_bid} | Ask={t_ask}")
 
             portfolio_items.append({
                 "ticker": item.contract.symbol,
