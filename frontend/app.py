@@ -218,35 +218,53 @@ with tab1:
                           
                           wrapper = None
                           if status in filled_statuses:
-                               wrapper = st.success(" ", icon="✅")
+                               # User requested grey (neutral). standard container with border is the closest native look.
+                               wrapper = st.container(border=True)
                           elif status in active_statuses:
                                wrapper = st.warning(" ", icon="⏳")
                           else:
+                               # Cancelled/Other
                                wrapper = st.container(border=True)
+                          
+                          
+                          # Container Style
+                          wrapper = st.container(border=False)
+                          if status in active_statuses:
+                               wrapper = st.warning(" ", icon="⏳")
                           
                           with wrapper:
                               r_cols = st.columns([1, 1, 1, 0.8, 0.8, 1, 1, 1, 1.2, 0.8], vertical_alignment="center")
                               
-                              r_cols[0].text(o['id'])
-                              r_cols[1].text(o['time'])
-                              r_cols[2].text(o['ticker'])
+                              # Styling Helper
+                              is_filled = status in filled_statuses
+                              def style_text(t, color=None):
+                                  if is_filled:
+                                      return f":grey[{t}]"
+                                  if color:
+                                      return f":{color}[{t}]"
+                                  return t
+
+                              r_cols[0].markdown(style_text(o['id']))
+                              r_cols[1].markdown(style_text(o['time']))
+                              r_cols[2].markdown(style_text(o['ticker']))
                               
                               # Action Colors
                               act = o['action']
                               act_color = "green" if act == "BUY" else "red"
-                              r_cols[3].markdown(f":{act_color}[{act}]")
+                              # If filled, override to grey (or keep color? "Grey fonts" usually implies monochrome). 
+                              # Let's try monochrome for full effect.
+                              r_cols[3].markdown(style_text(act, act_color))
                               
-                              r_cols[4].text(int(o['total_qty']))
+                              r_cols[4].markdown(style_text(int(o['total_qty'])))
                               
                               limit = o.get('price', 0.0) or 0.0
                               stop = o.get('stop_price', 0.0) or 0.0
-                              # Price (Filled or Current)
                               price = o.get('current_or_filled_price', 0.0) or 0.0
                               
-                              r_cols[5].text(f"${limit:.2f}" if limit > 0 else "MKT")
-                              r_cols[6].text(f"${stop:.2f}" if stop > 0 else "-")
-                              r_cols[7].text(f"${price:.2f}")
-                              r_cols[8].text(status)
+                              r_cols[5].markdown(style_text(f"${limit:.2f}" if limit > 0 else "MKT"))
+                              r_cols[6].markdown(style_text(f"${stop:.2f}" if stop > 0 else "-"))
+                              r_cols[7].markdown(style_text(f"${price:.2f}"))
+                              r_cols[8].markdown(style_text(status))
                               
                               # Cancel Button (Only for Active)
                               if status in active_statuses:
