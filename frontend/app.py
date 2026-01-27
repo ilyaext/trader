@@ -67,6 +67,27 @@ if "ticker" not in st.session_state:
 tab1, tab2, tab3 = st.tabs(["Trading", "Historical Data", "Strategy Agent"])
 
 with tab1:
+    @st.dialog("Confirm Close Position")
+    def close_position_dialog(ticker, quantity):
+        st.warning(f"Are you sure you want to sell {quantity} shares of {ticker} at Market Price?")
+        if st.button("Confirm Sell", type="primary"):
+            should_rerun = False
+            try:
+                # Note: Backend expects query param 'ticker' for this endpoint based on main.py analysis
+                # requests.post(..., params={"ticker": ticker})
+                res = requests.post(f"{ST_BACKEND_URL}/positions/close", params={"ticker": ticker})
+                if res.status_code == 200:
+                    st.success(f"Order Submitted: Close {ticker}")
+                    time.sleep(1) # Give it a moment to read
+                    should_rerun = True
+                else:
+                    st.error(f"Failed: {res.text}")
+            except Exception as e:
+                st.error(f"Error: {e}")
+            
+            if should_rerun:
+                st.rerun()
+
     @st.fragment(run_every=5)
     def render_portfolio():
         st.subheader("Current Positions")
@@ -75,78 +96,63 @@ with tab1:
             if port_res.status_code == 200:
                 portfolio = port_res.json()
                 if portfolio:
-                    df = pd.DataFrame(portfolio)
+                    # Header
+                    # Cols: Ticker, CHG %, P/L $, Cur. Price, Qty, Avg Price, Stop Price, Distance, Risk, Close
+                    # Ratios roughly match the previous dataframe columns but simplified for layout
+                    # Total 10 columns
                     
-                    # Columns: ticker, quantity, avg_cost, market_price, market_value, unrealized_pnl, realized_pnl, pnl_percent, today_pnl, today_pnl_pct, stop_loss, distance_to_stop, risk_amount
-                    df['Total P/L $'] = df['unrealized_pnl']
-                    df['Total P/L %'] = df['pnl_percent']
-                    df['P/L $'] = df['today_pnl']
-                    df['CHG %'] = df['today_pnl_pct']
-                    df['Stop Price'] = df['stop_loss']
-                    df['Distance'] = df['distance_to_stop']
-                    df['Risk'] = df['risk_amount']
-                    df['Fill Date'] = df['last_fill_date']
+                    # Define columns
+                    # Ticker (1), CHG% (0.8), P/L$ (1), Cur (1), Qty (0.8), Avg (1), Stop (1), Dist (1), Risk (1), Action (0.6)
+                    col_ratios = [1, 0.8, 1, 1, 0.8, 1, 1, 1, 1, 0.6]
+                    headers = ["Ticker", "CHG %", "P/L $", "Cur. Price", "Qty", "Avg Price", "Stop Price", "Distance", "Risk", "Action"]
                     
-                    # Select and Order Columns: Ticker, CHG %, P/L $, Cur. Price, Qty, Avg Price, Stop Price, Distance, Risk, Total P/L $, Total P/L %, Mkt Value, Fill Date
-                    display_df = df[[
-                        'ticker', 'CHG %', 'P/L $', 'market_price', 
-                        'quantity', 'avg_cost', 'Stop Price', 'Distance', 'Risk', 'Total P/L $', 'Total P/L %', 'market_value', 'Fill Date'
-                    ]].copy()
+                    cols = st.columns(col_ratios, vertical_alignment="center")
+                    for i, h in enumerate(headers):
+                        cols[i].markdown(f"**{h}**")
                     
-                    display_df.columns = [
-                        'Ticker', 'CHG %', 'P/L $', 'Cur. Price', 
-                        'Qty', 'Avg Price', 'Stop Price', 'Distance', 'Risk', 'Total P/L $', 'Total P/L %', 'Mkt Value', 'Fill Date'
-                    ]
-                    
-                    # Apply color styling
-                    def color_pnl(val):
-                        try:
-                            # Handle potential non-numeric types if any, though we expect floats
-                            v = float(val)
-                            if v > 0: return 'color: green'
-                            elif v < 0: return 'color: red'
-                            return ''
-                        except:
-                            return ''
-
-                    styled_df = display_df.style.map(color_pnl, subset=['CHG %', 'P/L $', 'Total P/L $', 'Total P/L %', 'Risk'])
-                    
-                    # Apply formatting directly to Styler to ensure it renders correctly
-                    # (Streamlit column_config can be overridden by Styler)
-                    styled_df = styled_df.format({
-                        'CHG %': "{:.2f}%", 
-                        'P/L $': "${:.2f}",
-                        'Cur. Price': "${:.2f}",
-                        'Avg Price': "${:.2f}",
-                        'Stop Price': "${:.2f}",
-                        'Distance': "${:.2f}",
-                        'Risk': "${:.2f}", 
-                        'Total P/L $': "${:.2f}",
-                        'Total P/L %': "{:.2f}%",
-                        'Mkt Value': "${:.2f}",
-                        'Qty': "{:.0f}"
-                    })
-                    # Fill Date is string, no special formatting needed in st.dataframe or styler beyond default
-                    
-                    st.dataframe(
-                        styled_df,
-                        column_config={
-                            "CHG %": st.column_config.NumberColumn("CHG %", format="%.2f%%"),
-                            "P/L $": st.column_config.NumberColumn("P/L $", format="$%.2f"),
-                            "Total P/L %": st.column_config.NumberColumn("Total P/L %", format="%.2f%%"),
-                            "Total P/L $": st.column_config.NumberColumn("Total P/L $", format="$%.2f"),
-                            "Mkt Value": st.column_config.NumberColumn("Mkt Value", format="$%.2f"),
-                            "Avg Price": st.column_config.NumberColumn("Avg Price", format="$%.2f"),
-                            "Cur. Price": st.column_config.NumberColumn("Cur. Price", format="$%.2f"),
-                            "Stop Price": st.column_config.NumberColumn("Stop Price", format="$%.2f"),
-                            "Distance": st.column_config.NumberColumn("Distance", format="$%.2f"),
-                            "Risk": st.column_config.NumberColumn("Risk", format="$%.2f"),
-                            "Fill Date": st.column_config.TextColumn("Fill Date"),
-                            "Qty": st.column_config.NumberColumn("Qty", format="%d"),
-                        },
-                        hide_index=True,
-                        use_container_width=True
-                    )
+                    for p in portfolio:
+                        # Extract data
+                        ticker = p.get('ticker')
+                        qty = p.get('quantity', 0)
+                        
+                        # Formatting helpers
+                        def fmt_usd(v): return f"${v:,.2f}"
+                        def fmt_pct(v): return f"{v:+.2f}%"
+                        
+                        # Data prep
+                        chg_pct = p.get('today_pnl_pct', 0.0)
+                        pnl_doll = p.get('today_pnl', 0.0)
+                        cur_price = p.get('market_price', 0.0)
+                        avg_cost = p.get('avg_cost', 0.0)
+                        stop_loss = p.get('stop_loss', 0.0)
+                        dist = p.get('distance_to_stop', 0.0)
+                        risk = p.get('risk_amount', 0.0)
+                        
+                        # Render Row
+                        r_cols = st.columns(col_ratios, vertical_alignment="center")
+                        
+                        r_cols[0].text(ticker)
+                        
+                        # CHG % Color
+                        color = "green" if chg_pct >= 0 else "red"
+                        r_cols[1].markdown(f":{color}[{fmt_pct(chg_pct)}]")
+                        
+                        # P/L $ Color
+                        color_pnl = "green" if pnl_doll >= 0 else "red"
+                        r_cols[2].markdown(f":{color_pnl}[{fmt_usd(pnl_doll)}]")
+                        
+                        r_cols[3].text(fmt_usd(cur_price))
+                        r_cols[4].text(f"{int(qty)}")
+                        r_cols[5].text(fmt_usd(avg_cost))
+                        
+                        r_cols[6].text(fmt_usd(stop_loss) if stop_loss > 0 else "-")
+                        r_cols[7].text(fmt_usd(dist) if dist != 0 else "-")
+                        r_cols[8].text(fmt_usd(risk) if risk != 0 else "-")
+                        
+                        # Close Button
+                        if r_cols[9].button("Close", key=f"close_btn_{ticker}"):
+                            close_position_dialog(ticker, qty)
+                        
                 else:
                     st.info("No open positions.")
             else:
@@ -158,6 +164,27 @@ with tab1:
 
     st.markdown("---")
 
+    @st.dialog("Confirm Cancel Order")
+    def confirm_cancel_dialog(order_id, ticker, action, qty):
+        st.warning(f"Are you sure you want to CANCEL Order #{order_id}?")
+        st.markdown(f"**{action} {qty} {ticker}**")
+        
+        if st.button("Confirm Cancel", type="primary"):
+            should_rerun = False
+            try:
+                res = requests.post(f"{ST_BACKEND_URL}/orders/{order_id}/cancel")
+                if res.status_code == 200:
+                    st.success(f"Order {order_id} Cancelled")
+                    time.sleep(0.5)
+                    should_rerun = True
+                else:
+                    st.error(f"Failed: {res.text}")
+            except Exception as e:
+                 st.error(f"Error: {e}")
+            
+            if should_rerun:
+                 st.rerun()
+
     @st.fragment(run_every=2)
     def render_orders():
          st.subheader("Orders")
@@ -166,27 +193,66 @@ with tab1:
               if orders_res.status_code == 200:
                   orders = orders_res.json()
                   if orders:
-                      df_orders = pd.DataFrame(orders)
-                      # Rename columns: 'current_or_filled_price' -> 'Price', 'price' -> 'Limit', 'stop_price' -> 'Stop Price'
-                      df_orders.rename(columns={
-                          'current_or_filled_price': 'Price', 
-                          'price': 'Limit', 
-                          'stop_price': 'Stop Price',
-                          'id': 'ID', 'time': 'Time', 'ticker': 'Ticker', 'action': 'Action', 'total_qty': 'Qty', 'status': 'Status', 'type': 'Type'
-                      }, inplace=True)
+                      # Headers
+                      # ID, Time, Ticker, Action, Qty, Limit, Stop, Price, Status, Actions
                       
-                      # Columns: ID, Time, Ticker, Action, Qty, Limit, Stop Price, Price, Status, Type
-                      st.dataframe(
-                          df_orders[['ID', 'Time', 'Ticker', 'Action', 'Qty', 'Limit', 'Stop Price', 'Price', 'Status', 'Type']], 
-                          column_config={
-                              "Qty": st.column_config.NumberColumn("Qty", format="%d"),
-                              "Limit": st.column_config.NumberColumn("Limit", format="$%.2f"),
-                              "Stop Price": st.column_config.NumberColumn("Stop Price", format="$%.2f"),
-                              "Price": st.column_config.NumberColumn("Price", format="$%.2f"),
-                          },
-                          hide_index=True,
-                          use_container_width=True
-                      )
+                      # No generic headers row if we use containers for rows (visual separation), 
+                      # but a header row is good practice.
+                      h_cols = st.columns([1, 1, 1, 0.8, 0.8, 1, 1, 1, 1.2, 0.8])
+                      headers = ["ID", "Time", "Ticker", "Action", "Qty", "Limit", "Stop", "Price", "Status", "Wait"]
+                      for i, h in enumerate(headers):
+                          h_cols[i].markdown(f"**{h}**")
+                      
+                      for o in orders:
+                          # Determine Style based on Status
+                          status = o['status']
+                          
+                          # Active statuses
+                          active_statuses = ['Submitted', 'PreSubmitted', 'PendingSubmit', 'ApiPending']
+                          filled_statuses = ['Filled']
+                          cancelled_statuses = ['Cancelled', 'Inactive']
+                          
+                          # Use the container for the row
+                          # Note: st.success/warning/etc creates a bordered colored box.
+                          # We put columns INSIDE it.
+                          
+                          wrapper = None
+                          if status in filled_statuses:
+                               wrapper = st.success(" ", icon="✅")
+                          elif status in active_statuses:
+                               wrapper = st.warning(" ", icon="⏳")
+                          else:
+                               wrapper = st.container(border=True)
+                          
+                          with wrapper:
+                              r_cols = st.columns([1, 1, 1, 0.8, 0.8, 1, 1, 1, 1.2, 0.8], vertical_alignment="center")
+                              
+                              r_cols[0].text(o['id'])
+                              r_cols[1].text(o['time'])
+                              r_cols[2].text(o['ticker'])
+                              
+                              # Action Colors
+                              act = o['action']
+                              act_color = "green" if act == "BUY" else "red"
+                              r_cols[3].markdown(f":{act_color}[{act}]")
+                              
+                              r_cols[4].text(int(o['total_qty']))
+                              
+                              limit = o.get('price', 0.0) or 0.0
+                              stop = o.get('stop_price', 0.0) or 0.0
+                              # Price (Filled or Current)
+                              price = o.get('current_or_filled_price', 0.0) or 0.0
+                              
+                              r_cols[5].text(f"${limit:.2f}" if limit > 0 else "MKT")
+                              r_cols[6].text(f"${stop:.2f}" if stop > 0 else "-")
+                              r_cols[7].text(f"${price:.2f}")
+                              r_cols[8].text(status)
+                              
+                              # Cancel Button (Only for Active)
+                              if status in active_statuses:
+                                  if r_cols[9].button("🗑️", key=f"cancel_{o['id']}", help="Cancel Order"):
+                                      confirm_cancel_dialog(o['id'], o['ticker'], act, o['total_qty'])
+
                   else:
                       st.info("No active/executed orders this session.")
               else:

@@ -440,6 +440,19 @@ async def place_order(order: OrderRequest, db: Session = Depends(get_db)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/orders/{order_id}/cancel")
+async def cancel_order(order_id: str):
+    if not ib_service.check_connection:
+        raise HTTPException(status_code=503, detail="IBKR Disconnected")
+    
+    try:
+        ib_service.cancel_order(order_id)
+        return {"status": "cancelled", "order_id": order_id}
+    except ValueError as ve:
+         raise HTTPException(status_code=404, detail=str(ve))
+    except Exception as e:
+         raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/trades")
 async def get_trades(db: Session = Depends(get_db)):
     trades = db.query(Trade).order_by(Trade.timestamp.desc()).limit(10).all()

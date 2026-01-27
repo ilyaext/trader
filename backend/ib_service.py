@@ -207,6 +207,32 @@ class IBIntegration:
         
         return trades[0] # Return parent trade
 
+    def cancel_order(self, order_id):
+        """Cancels an active order by ID"""
+        if not self.check_connection:
+            raise Exception("IBKR not connected")
+            
+        # Look in open orders first (most likely)
+        target_order = None
+        for trade in self.ib.openTrades():
+            if trade.order.orderId == int(order_id):
+                target_order = trade.order
+                break
+        
+        # If not found in open trades, check all orders (edge case where it might be in valid list but not active?)
+        if not target_order:
+             for order in self.ib.orders():
+                 if order.orderId == int(order_id):
+                     target_order = order
+                     break
+        
+        if target_order:
+            self.ib.cancelOrder(target_order)
+            logger.info(f"Requested cancellation for Order {order_id}")
+            return True
+        else:
+            raise ValueError(f"Order {order_id} not found or already filled/cancelled")
+
     async def download_historical_data(self, ticker_symbol, start_date, end_date, bar_size="1 day"):
         if not self.check_connection:
             raise Exception("IBKR not connected")
