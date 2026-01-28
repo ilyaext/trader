@@ -58,22 +58,8 @@ class IBIntegration:
         logger.info(f"Connecting to {self.host}:{self.port} with Client ID: {self.client_id}...")
         
         try:
-            # MONKEYPATCH: ib_insync calls reqExecutionsAsync inside connectAsync.
-            # If TWS is busy/blocking, this fails the entire connection.
-            # We temporarily disable it to force a connection.
-            real_reqExecutionsAsync = self.ib.reqExecutionsAsync
-            
-            async def noop(*args, **kwargs):
-                logger.warning("Skipping internal execution request during connect")
-                return []
-                
-            self.ib.reqExecutionsAsync = noop
-            
             # Connect
             await self.ib.connectAsync(self.host, self.port, clientId=self.client_id)
-            
-            # Restore
-            self.ib.reqExecutionsAsync = real_reqExecutionsAsync
             
             logger.info("✅ Connected to IBKR")
             
@@ -96,19 +82,50 @@ class IBIntegration:
     def check_connection(self):
         return self.ib.isConnected()
 
+    async def robust_qualify_contract(self, ticker_symbol):
+        """Attempts to qualify a stock contract with multiple fallback strategies"""
+        # 1. Try SMART (Preferred)
+        c = Stock(ticker_symbol, 'SMART', 'USD')
+        try:
+            await self.ib.qualifyContractsAsync(c)
+            if c.conId != 0: return c
+        except: pass
+        
+        # 2. Try Empty Exchange (Let IBKR decide)
+        c = Stock(ticker_symbol, '', 'USD')
+        try:
+            await self.ib.qualifyContractsAsync(c)
+            if c.conId != 0: return c
+        except: pass
+        
+        # 3. Try ISLAND (NASDAQ) - Common fallback for Tech
+        c = Stock(ticker_symbol, 'ISLAND', 'USD')
+        try:
+            await self.ib.qualifyContractsAsync(c)
+            if c.conId != 0: return c
+        except: pass
+        
+        # 4. Search via ContractDetails (Exhaustive)
+        print(f"DEBUG: robust_qualify_contract failed basic qualification for {ticker_symbol}. Searching details...")
+        try:
+            proto = Stock(ticker_symbol, '', 'USD')
+            details = await self.ib.reqContractDetailsAsync(proto)
+            if details:
+                # Pick the first one that matches
+                c = details[0].contract
+                await self.ib.qualifyContractsAsync(c)
+                if c.conId != 0: return c
+        except Exception as e:
+            print(f"DEBUG: reqContractDetails failed for {ticker_symbol}: {e}")
+            
+        return c # Return the failed contract (conId=0)
+
     async def get_price(self, ticker_symbol):
         if not self.check_connection:
             return 0.0
         
-        contract = Stock(ticker_symbol, 'SMART', 'USD')
+        contract = await self.robust_qualify_contract(ticker_symbol)
         
-        # Qualify to ensure we have the unique ConId
-        try:
-            await self.ib.qualifyContractsAsync(contract)
-        except Exception as e:
-            print(f"Contract qualification warning/error: {e}")
-            return None # Invalid ticker
-
         if contract.conId == 0:
             print(f"Contract validation failed (conId=0): {ticker_symbol}")
             return None
@@ -166,7 +183,9 @@ class IBIntegration:
         if not self.check_connection:
             raise Exception("IBKR not connected")
 
-        contract = Stock(ticker_symbol, 'SMART', 'USD')
+        contract = await self.robust_qualify_contract(ticker_symbol)
+        if contract.conId == 0:
+            raise ValueError(f"Invalid Ticker: {ticker_symbol}")
         
         # Parent Order
         if order_type.upper() == "LIMIT":
@@ -237,8 +256,9 @@ class IBIntegration:
         if not self.check_connection:
             raise Exception("IBKR not connected")
             
-        contract = Stock(ticker_symbol, 'SMART', 'USD')
-        await self.ib.qualifyContractsAsync(contract)
+        contract = await self.robust_qualify_contract(ticker_symbol)
+        if contract.conId == 0:
+             raise ValueError(f"Invalid Ticker: {ticker_symbol}")
         
         # IBKR requires endDateTime in format 'YYYYMMDD HH:mm:ss'
         # We assume end of day for the end_date
@@ -308,8 +328,7 @@ class IBIntegration:
         if not self.check_connection:
             return
             
-        contract = Stock(ticker_symbol, 'SMART', 'USD')
-        await self.ib.qualifyContractsAsync(contract)
+        contract = await self.robust_qualify_contract(ticker_symbol)
         
         if contract.conId == 0:
             raise ValueError(f"Invalid Ticker: {ticker_symbol}")

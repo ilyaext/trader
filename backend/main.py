@@ -496,3 +496,6 @@ async def get_account_summary():
 @app.get("/health")
 async def health():
     return {"status": "ok", "ib_connected": ib_service.check_connection}
+
+
+
