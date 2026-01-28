@@ -13,28 +13,26 @@ st.set_page_config(page_title="Trader Bot", layout="wide", page_icon="📈")
 # --- Sidebar ---
 st.sidebar.title("🤖 Trader Bot")
 
-# Status Check
-try:
-    health = requests.get(f"{ST_BACKEND_URL}/health", timeout=2).json()
-    status_color = "green" if health['status'] == 'ok' else "red"
-    ib_status = "Connected" if health.get('ib_connected') else "Disconnected"
-    ib_color = "green" if health.get('ib_connected') else "orange"
-    
-    st.sidebar.markdown(f"**Backend:** :{status_color}[Online]")
-    st.sidebar.markdown(f"**IBKR:** :{ib_color}[{ib_status}]")
-    
-except:
-    st.sidebar.markdown("**Backend:** :red[Offline]")
-    ib_status = "Unknown"
-
-st.sidebar.markdown("---")
-
-# --- Account Summary (Sidebar) ---
+# --- Account Summary & Status (Sidebar) ---
 @st.fragment(run_every=5)
 def render_sidebar_metrics():
+    # 1. Status Check (Polled)
+    try:
+        health = requests.get(f"{ST_BACKEND_URL}/health", timeout=2).json()
+        status_color = "green" if health['status'] == 'ok' else "red"
+        ib_status = "Connected" if health.get('ib_connected') else "Disconnected"
+        ib_color = "green" if health.get('ib_connected') else "orange"
+        
+        st.markdown(f"**Backend:** :{status_color}[Online]")
+        st.markdown(f"**IBKR:** :{ib_color}[{ib_status}]")
+    except:
+        st.markdown("**Backend:** :red[Offline]")
+        st.markdown("**IBKR:** :red[Unknown]")
+
+    st.markdown("---")
     st.subheader("Account Summary")
     try:
-        acc_res = requests.get(f"{ST_BACKEND_URL}/account")
+        acc_res = requests.get(f"{ST_BACKEND_URL}/account", timeout=2)
         if acc_res.status_code == 200:
             data = acc_res.json()
             
@@ -53,7 +51,8 @@ def render_sidebar_metrics():
         else:
             st.error("Data Unavailable")
     except Exception as e:
-        st.error("Connection Error")
+        # st.error("Connection Error to Backend")
+        pass # Health check above covers this visual
 
 with st.sidebar:
     render_sidebar_metrics()

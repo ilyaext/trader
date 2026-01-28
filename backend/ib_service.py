@@ -29,7 +29,21 @@ class IBIntegration:
         self.price_callbacks = []
         self.ib.pendingTickersEvent += self.on_pending_tickers
         self.ib.disconnectedEvent += self.on_disconnected
+        self.ib.errorEvent += self.on_error
         self.client_id = random.randint(2, 999) 
+        self.last_heartbeat = datetime.now() # Initialize to now so startup doesn't fail immediately 
+
+    def on_error(self, reqId, errorCode, errorString, contract):
+        """Handle IBKR API errors"""
+        # 1100=Connectivity lost, 10197=Competing Session, 2110=Connectivity broken
+        if errorCode in [1100, 10197, 2110]:
+            print(f"🚨 CRITICAL IBKR ERROR {errorCode}: {errorString}")
+            # Force connection check to fail by invalidating heartbeat
+            self.last_heartbeat = datetime(2000, 1, 1)
+
+            # Manually disconnect to trigger clean reconnection loop
+            asyncio.create_task(self.force_disconnect()) 
+        self.last_heartbeat = datetime.now() # Initialize to now so startup doesn't fail immediately 
 
     def on_order_status(self, trade):
         """Callback for real-time order updates from IBKR"""
@@ -80,7 +94,30 @@ class IBIntegration:
                 
     @property
     def check_connection(self):
-        return self.ib.isConnected()
+        # Strict verification: Socket connected AND Heartbeat recent (< 15s)
+        is_socket_connected = self.ib.isConnected()
+        
+        # If never validated, rely on socket (initial startup)
+        if not hasattr(self, 'last_heartbeat'):
+             return is_socket_connected
+
+        # If validated recently, return True
+        time_since_heartbeat = (datetime.now() - self.last_heartbeat).total_seconds()
+        return is_socket_connected and time_since_heartbeat < 15
+
+    async def validate_connection(self):
+        """Actively checks connection health by requesting current time"""
+        if not self.ib.isConnected():
+            return False
+            
+        try:
+            # 2 second timeout for heartbeat
+            await asyncio.wait_for(self.ib.reqCurrentTimeAsync(), timeout=2.0)
+            self.last_heartbeat = datetime.now() # Update timestamp
+            return True
+        except Exception as e:
+            logger.warning(f"Heartbeat failed: {e}")
+            return False
 
     async def robust_qualify_contract(self, ticker_symbol):
         """Attempts to qualify a stock contract with multiple fallback strategies"""

@@ -129,8 +129,12 @@ async def lifespan(app: FastAPI):
 async def check_connection_loop():
     while True:
         try:
-            if not ib_service.check_connection:
-                print("Detected API Disconnect. Attempting to reconnect...")
+            # Use active validation instead of passive check
+            is_valid = await ib_service.validate_connection()
+            
+            if not is_valid:
+                print("⚠️ Heartbeat failed or Disconnected. Resetting connection...")
+                await ib_service.force_disconnect()
                 await ib_service.connect()
                 
                 # Re-subscribe to active strategies
