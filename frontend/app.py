@@ -215,19 +215,10 @@ with tab1:
                           # Note: st.success/warning/etc creates a bordered colored box.
                           # We put columns INSIDE it.
                           
-                          wrapper = None
-                          if status in filled_statuses:
-                               # User requested grey (neutral). standard container with border is the closest native look.
-                               wrapper = st.container(border=True)
-                          elif status in active_statuses:
-                               wrapper = st.warning(" ", icon="⏳")
-                          else:
-                               # Cancelled/Other
-                               wrapper = st.container(border=True)
-                          
-                          
                           # Container Style
                           wrapper = st.container(border=False)
+                          if status in active_statuses:
+                               wrapper = st.warning(" ", icon="⏳")
                           if status in active_statuses:
                                wrapper = st.warning(" ", icon="⏳")
                           
