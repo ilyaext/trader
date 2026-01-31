@@ -8,6 +8,9 @@ import plotly.graph_objects as go
 # Configuration
 ST_BACKEND_URL = os.getenv("BACKEND_URL", "http://backend:8000")
 
+# Configuration
+TARGET_INVESTMENT = 3000.0
+
 st.set_page_config(page_title="Trader Bot", layout="wide", page_icon="📈")
 
 # --- Sidebar ---
@@ -474,42 +477,82 @@ with tab3:
     st.subheader("Breakout Strategy Manager")
     
     # --- 1. Create Strategy Form ---
+
     with st.expander("➕ Add New Strategy", expanded=True):
-        with st.form("strategy_form"):
-            c1, c2, c3, c4 = st.columns(4)
-            with c1:
-                s_ticker = st.text_input("Ticker", "").strip().upper()
-            with c2:
-                s_entry = st.number_input("Entry Alert ($)", min_value=0.0, step=0.01, value=None)
-            with c3:
-                s_sl = st.number_input("Stop Loss ($)", min_value=0.0, step=0.01, value=0.0)
-            with c4:
-                s_qty = st.number_input("Qty", min_value=1, value=10)
+        # State Initialization for Form
+        if "f_ticker" not in st.session_state: st.session_state.f_ticker = ""
+        if "f_entry" not in st.session_state: st.session_state.f_entry = None
+        if "f_sl" not in st.session_state: st.session_state.f_sl = 0.0
+        if "f_qty" not in st.session_state: st.session_state.f_qty = 1
+
+        # Callback for Entry Price Change
+        def on_entry_change():
+            if st.session_state.f_entry and st.session_state.f_entry > 0:
+                # Auto-Calc Stop Loss (Entry - 3%)
+                st.session_state.f_sl = round(st.session_state.f_entry * 0.97, 2)
+                # Auto-Calc Qty (Target / Entry)
+                if st.session_state.f_entry > 0:
+                    st.session_state.f_qty = int(round(TARGET_INVESTMENT / st.session_state.f_entry))
+
+        c1, c2, c3, c4 = st.columns(4, vertical_alignment="bottom")
+        
+        with c1:
+            st.text_input("Ticker", key="f_ticker", placeholder="")
+        with c2:
+            st.number_input("Entry Alert ($)", min_value=0.0, step=0.01, key="f_entry", on_change=on_entry_change)
+        with c3:
+            st.number_input("Stop Loss ($)", min_value=0.0, step=0.01, key="f_sl")
+        with c4:
+            st.number_input("Qty", min_value=1, key="f_qty")
+        
+        # Callback for Submission
+        def submit_strategy():
+            s_ticker = st.session_state.f_ticker.strip().upper()
+            s_entry = st.session_state.f_entry
+            s_sl = st.session_state.f_sl
+            s_qty = st.session_state.f_qty
             
-            if st.form_submit_button("Create Alert"):
-                should_rerun = False
-                
-                if not s_ticker or s_entry is None:
-                     st.error("Please enter Ticker and Entry Price")
+            if not s_ticker or not s_entry:
+                st.session_state.form_error = "Please enter Ticker and Entry Price"
+                st.session_state.form_success = None
+                return
+
+            try:
+                req_data = {
+                    "ticker": s_ticker, 
+                    "entry_price": s_entry, 
+                    "stop_loss": s_sl if s_sl > 0 else None, 
+                    "quantity": s_qty,
+                }
+                res = requests.post(f"{ST_BACKEND_URL}/strategies", json=req_data)
+                if res.status_code == 200:
+                    st.session_state.form_success = f"Alert set for {s_ticker} > ${s_entry}"
+                    st.session_state.form_error = None
+                    
+                    # RESET FORM (Safe in callback)
+                    st.session_state.f_ticker = ""
+                    st.session_state.f_entry = None
+                    st.session_state.f_sl = 0.0
+                    st.session_state.f_qty = 1
                 else:
-                    try:
-                        req_data = {
-                            "ticker": s_ticker, 
-                            "entry_price": s_entry, 
-                            "stop_loss": s_sl if s_sl > 0 else None, 
-                            "quantity": s_qty,
-                        }
-                        res = requests.post(f"{ST_BACKEND_URL}/strategies", json=req_data)
-                        if res.status_code == 200:
-                            st.success(f"Alert set for {s_ticker} > ${s_entry}")
-                            should_rerun = True
-                        else:
-                            st.error(f"Error: {res.text}")
-                    except Exception as e:
-                        st.error(f"Req Error: {e}")
-                
-                if should_rerun:
-                    st.rerun()
+                    st.session_state.form_error = f"Error: {res.text}"
+                    st.session_state.form_success = None
+            except Exception as e:
+                st.session_state.form_error = f"Req Error: {e}"
+                st.session_state.form_success = None
+
+        if st.button("Create Alert", type="primary", on_click=submit_strategy):
+            pass
+        
+        # Display Messages
+        if "form_error" in st.session_state and st.session_state.form_error:
+            st.error(st.session_state.form_error)
+            # Clear after display so it doesn't persist forever
+            st.session_state.form_error = None
+            
+        if "form_success" in st.session_state and st.session_state.form_success:
+            st.success(st.session_state.form_success)
+            st.session_state.form_success = None
 
     st.markdown("---")
 
