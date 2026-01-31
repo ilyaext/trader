@@ -163,208 +163,7 @@ with tab1:
 
     st.markdown("---")
 
-    @st.dialog("Confirm Cancel Order")
-    def confirm_cancel_dialog(order_id, ticker, action, qty):
-        st.warning(f"Are you sure you want to CANCEL Order #{order_id}?")
-        st.markdown(f"**{action} {qty} {ticker}**")
-        
-        if st.button("Confirm Cancel", type="primary"):
-            should_rerun = False
-            try:
-                res = requests.post(f"{ST_BACKEND_URL}/orders/{order_id}/cancel")
-                if res.status_code == 200:
-                    st.success(f"Order {order_id} Cancelled")
-                    time.sleep(0.5)
-                    should_rerun = True
-                else:
-                    st.error(f"Failed: {res.text}")
-            except Exception as e:
-                 st.error(f"Error: {e}")
-            
-            if should_rerun:
-                 st.rerun()
-
-    @st.fragment(run_every=2)
-    def render_orders():
-         st.subheader("Orders")
-         try:
-              orders_res = requests.get(f"{ST_BACKEND_URL}/orders")
-              if orders_res.status_code == 200:
-                  orders = orders_res.json()
-                  if orders:
-                      # Headers
-                      # ID, Time, Ticker, Action, Qty, Limit, Stop, Price, Status, Actions
-                      
-                      # No generic headers row if we use containers for rows (visual separation), 
-                      # but a header row is good practice.
-                      h_cols = st.columns([1, 1, 1, 0.8, 0.8, 1, 1, 1, 1.2, 0.8])
-                      headers = ["ID", "Time", "Ticker", "Action", "Qty", "Limit", "Stop", "Price", "Status", "Wait"]
-                      for i, h in enumerate(headers):
-                          h_cols[i].markdown(f"**{h}**")
-                      
-                      for o in orders:
-                          # Determine Style based on Status
-                          status = o['status']
-                          
-                          # Active statuses
-                          active_statuses = ['Submitted', 'PreSubmitted', 'PendingSubmit', 'ApiPending']
-                          filled_statuses = ['Filled']
-                          cancelled_statuses = ['Cancelled', 'Inactive']
-                          
-                          # Use the container for the row
-                          # Note: st.success/warning/etc creates a bordered colored box.
-                          # We put columns INSIDE it.
-                          
-                          # Container Style
-                          wrapper = st.container(border=False)
-                          if status in active_statuses:
-                               wrapper = st.warning(" ", icon="⏳")
-                          if status in active_statuses:
-                               wrapper = st.warning(" ", icon="⏳")
-                          
-                          with wrapper:
-                              r_cols = st.columns([1, 1, 1, 0.8, 0.8, 1, 1, 1, 1.2, 0.8], vertical_alignment="center")
-                              
-                              # Styling Helper
-                              is_filled = status in filled_statuses
-                              def style_text(t, color=None):
-                                  if is_filled:
-                                      return f":grey[{t}]"
-                                  if color:
-                                      return f":{color}[{t}]"
-                                  return t
-
-                              r_cols[0].markdown(style_text(o['id']))
-                              r_cols[1].markdown(style_text(o['time']))
-                              r_cols[2].markdown(style_text(o['ticker']))
-                              
-                              # Action Colors
-                              act = o['action']
-                              act_color = "green" if act == "BUY" else "red"
-                              # If filled, override to grey (or keep color? "Grey fonts" usually implies monochrome). 
-                              # Let's try monochrome for full effect.
-                              r_cols[3].markdown(style_text(act, act_color))
-                              
-                              r_cols[4].markdown(style_text(int(o['total_qty'])))
-                              
-                              limit = o.get('price', 0.0) or 0.0
-                              stop = o.get('stop_price', 0.0) or 0.0
-                              price = o.get('current_or_filled_price', 0.0) or 0.0
-                              
-                              r_cols[5].markdown(style_text(f"${limit:.2f}" if limit > 0 else "MKT"))
-                              r_cols[6].markdown(style_text(f"${stop:.2f}" if stop > 0 else "-"))
-                              r_cols[7].markdown(style_text(f"${price:.2f}"))
-                              r_cols[8].markdown(style_text(status))
-                              
-                              # Cancel Button (Only for Active)
-                              if status in active_statuses:
-                                  if r_cols[9].button("🗑️", key=f"cancel_{o['id']}", help="Cancel Order"):
-                                      confirm_cancel_dialog(o['id'], o['ticker'], act, o['total_qty'])
-
-                  else:
-                      st.info("No active/executed orders this session.")
-              else:
-                  st.error(f"Error fetching orders: {orders_res.text}")
-         except Exception as e:
-              st.error(f"Connection Error: {e}")
-
-    render_orders()
-
-    st.markdown("---")
-
-    st.subheader("Recent Activity (DB)")
-    try:
-        trades_res = requests.get(f"{ST_BACKEND_URL}/trades")
-        if trades_res.status_code == 200:
-            trades = trades_res.json()
-            if trades:
-                df = pd.DataFrame(trades)
-                st.dataframe(df[['timestamp', 'ticker', 'action', 'quantity', 'ib_order_id']], hide_index=True)
-            else:
-                st.info("No trades recorded yet.")
-    except:
-        st.warning("Could not fetch trades")
-
-with tab2:
-    st.subheader("Download Historical Data")
-    
-    # Ticker Input (Moved from Sidebar)
-    ticker = st.text_input("Ticker Symbol", value=st.session_state.ticker, key="h_ticker").strip().upper()
-    # Update session state for persistence
-    st.session_state.ticker = ticker
-    
-    h_col1, h_col2, h_col3 = st.columns(3)
-    with h_col1:
-        start_date = st.date_input("Start Date", value=pd.to_datetime("today") - pd.Timedelta(days=7), key="h_start")
-    with h_col2:
-        end_date = st.date_input("End Date", value=pd.to_datetime("today"), key="h_end")
-    with h_col3:
-        bar_size = st.selectbox("Bar Size", ["1 min", "5 mins", "1 hour", "1 day"], index=0, key="h_bar")
-        
-    st.caption(f"Requesting: {ticker} from {start_date} to {end_date} ({bar_size})")
-    
-    if st.button("Download Data", type="primary"):
-        if ib_status != "Connected":
-            st.error("Cannot download: IBKR Disconnected")
-        else:
-            try:
-                payload = {
-                    "ticker": ticker,
-                    "start_date": str(start_date),
-                    "end_date": str(end_date),
-                    "bar_size": bar_size
-                }
-                with st.spinner(f"Downloading {bar_size} data from IBKR..."):
-                    res = requests.post(f"{ST_BACKEND_URL}/history/download", json=payload)
-                    
-                if res.status_code == 200:
-                    data = res.json()
-                    st.success(f"Success! Saved to: {data['file']}")
-                else:
-                    st.error(f"Failed: {res.text}")
-            except Exception as e:
-                st.error(f"Error: {e}")
-
-with tab3:
-    st.subheader("Breakout Strategy Manager")
-    
-    # --- 1. Create Strategy Form ---
-    with st.expander("➕ Add New Strategy", expanded=True):
-        with st.form("strategy_form"):
-            c1, c2, c3, c4 = st.columns(4)
-            with c1:
-                s_ticker = st.text_input("Ticker", "SPY").strip().upper()
-            with c2:
-                s_entry = st.number_input("Entry Alert ($)", min_value=0.0, step=0.01)
-            with c3:
-                s_sl = st.number_input("Stop Loss ($)", min_value=0.0, step=0.01, value=0.0)
-            with c4:
-                s_qty = st.number_input("Qty", min_value=1, value=10)
-            
-            if st.form_submit_button("Create Alert"):
-                should_rerun = False
-                try:
-                    req_data = {
-                        "ticker": s_ticker, 
-                        "entry_price": s_entry, 
-                        "stop_loss": s_sl if s_sl > 0 else None, 
-                        "quantity": s_qty,
-                    }
-                    res = requests.post(f"{ST_BACKEND_URL}/strategies", json=req_data)
-                    if res.status_code == 200:
-                        st.success(f"Alert set for {s_ticker} > ${s_entry}")
-                        should_rerun = True
-                    else:
-                        st.error(f"Error: {res.text}")
-                except Exception as e:
-                    st.error(f"Req Error: {e}")
-                
-                if should_rerun:
-                    st.rerun()
-
-    st.markdown("---")
-
-    # --- 2. Monitored Alerts (Strategies) ---
+    # --- Monitored Alerts (Strategies) ---
     st.subheader("📡 Monitored")
 
     @st.fragment(run_every=5)
@@ -481,11 +280,211 @@ with tab3:
         else:
             st.info("No active alerts.")
 
-
-
     render_monitored_strategies()
 
     st.markdown("---")
+
+    @st.dialog("Confirm Cancel Order")
+    def confirm_cancel_dialog(order_id, ticker, action, qty):
+        st.warning(f"Are you sure you want to CANCEL Order #{order_id}?")
+        st.markdown(f"**{action} {qty} {ticker}**")
+        
+        if st.button("Confirm Cancel", type="primary"):
+            should_rerun = False
+            try:
+                res = requests.post(f"{ST_BACKEND_URL}/orders/{order_id}/cancel")
+                if res.status_code == 200:
+                    st.success(f"Order {order_id} Cancelled")
+                    time.sleep(0.5)
+                    should_rerun = True
+                else:
+                    st.error(f"Failed: {res.text}")
+            except Exception as e:
+                 st.error(f"Error: {e}")
+            
+            if should_rerun:
+                 st.rerun()
+
+    @st.fragment(run_every=2)
+    def render_orders():
+         st.subheader("Orders")
+         try:
+              orders_res = requests.get(f"{ST_BACKEND_URL}/orders")
+              if orders_res.status_code == 200:
+                  orders = orders_res.json()
+                  if orders:
+                      # Headers
+                      # ID, Time, Ticker, Action, Qty, Limit, Stop, Price, Status, Actions
+                      
+                      # No generic headers row if we use containers for rows (visual separation), 
+                      # but a header row is good practice.
+                      h_cols = st.columns([1, 1, 1, 0.8, 0.8, 1, 1, 1, 1.2, 0.8])
+                      headers = ["ID", "Time", "Ticker", "Action", "Qty", "Limit", "Stop", "Price", "Status", "Wait"]
+                      for i, h in enumerate(headers):
+                          h_cols[i].markdown(f"**{h}**")
+                      
+                      for o in orders:
+                          # Determine Style based on Status
+                          status = o['status']
+                          
+                          # Active statuses
+                          active_statuses = ['Submitted', 'PreSubmitted', 'PendingSubmit', 'ApiPending']
+                          filled_statuses = ['Filled']
+                          cancelled_statuses = ['Cancelled', 'Inactive']
+                          
+                          # Use the container for the row
+                          # Note: st.success/warning/etc creates a bordered colored box.
+                          # We put columns INSIDE it.
+                          
+                          # Container Style
+                          wrapper = st.container(border=False)
+                          if status in active_statuses:
+                               wrapper = st.warning(" ", icon="⏳")
+                          if status in active_statuses:
+                               wrapper = st.warning(" ", icon="⏳")
+                          
+                          with wrapper:
+                              r_cols = st.columns([1, 1, 1, 0.8, 0.8, 1, 1, 1, 1.2, 0.8], vertical_alignment="center")
+                              
+                              # Styling Helper
+                              is_filled = status in filled_statuses
+                              def style_text(t, color=None):
+                                  if is_filled:
+                                      return f":grey[{t}]"
+                                  if color:
+                                      return f":{color}[{t}]"
+                                  return t
+
+                              r_cols[0].markdown(style_text(o['id']))
+                              r_cols[1].markdown(style_text(o['time']))
+                              r_cols[2].markdown(style_text(o['ticker']))
+                              
+                              # Action Colors
+                              act = o['action']
+                              act_color = "green" if act == "BUY" else "red"
+                              # If filled, override to grey (or keep color? "Grey fonts" usually implies monochrome). 
+                              # Let's try monochrome for full effect.
+                              r_cols[3].markdown(style_text(act, act_color))
+                              
+                              r_cols[4].markdown(style_text(int(o['total_qty'])))
+                              
+                              limit = o.get('price', 0.0) or 0.0
+                              stop = o.get('stop_price', 0.0) or 0.0
+                              price = o.get('current_or_filled_price', 0.0) or 0.0
+                              
+                              r_cols[5].markdown(style_text(f"${limit:.2f}" if limit > 0 else "MKT"))
+                              r_cols[6].markdown(style_text(f"${stop:.2f}" if stop > 0 else "-"))
+                              r_cols[7].markdown(style_text(f"${price:.2f}"))
+                              r_cols[8].markdown(style_text(status))
+                              
+                              # Cancel Button (Only for Active)
+                              if status in active_statuses:
+                                  if r_cols[9].button("🗑️", key=f"cancel_{o['id']}", help="Cancel Order"):
+                                      confirm_cancel_dialog(o['id'], o['ticker'], act, o['total_qty'])
+
+                  else:
+                      st.info("No active/executed orders this session.")
+              else:
+                  st.error(f"Error fetching orders: {orders_res.text}")
+         except Exception as e:
+              st.error(f"Connection Error: {e}")
+
+    render_orders()
+
+
+
+with tab2:
+    st.subheader("Download Historical Data")
+    
+    # Ticker Input (Moved from Sidebar)
+    ticker = st.text_input("Ticker Symbol", value=st.session_state.ticker, key="h_ticker").strip().upper()
+    # Update session state for persistence
+    st.session_state.ticker = ticker
+    
+    h_col1, h_col2, h_col3 = st.columns(3)
+    with h_col1:
+        start_date = st.date_input("Start Date", value=pd.to_datetime("today") - pd.Timedelta(days=7), key="h_start")
+    with h_col2:
+        end_date = st.date_input("End Date", value=pd.to_datetime("today"), key="h_end")
+    with h_col3:
+        bar_size = st.selectbox("Bar Size", ["1 min", "5 mins", "1 hour", "1 day"], index=0, key="h_bar")
+        
+    st.caption(f"Requesting: {ticker} from {start_date} to {end_date} ({bar_size})")
+    
+    if st.button("Download Data", type="primary"):
+        if ib_status != "Connected":
+            st.error("Cannot download: IBKR Disconnected")
+        else:
+            try:
+                payload = {
+                    "ticker": ticker,
+                    "start_date": str(start_date),
+                    "end_date": str(end_date),
+                    "bar_size": bar_size
+                }
+                with st.spinner(f"Downloading {bar_size} data from IBKR..."):
+                    res = requests.post(f"{ST_BACKEND_URL}/history/download", json=payload)
+                    
+                if res.status_code == 200:
+                    data = res.json()
+                    st.success(f"Success! Saved to: {data['file']}")
+                else:
+                    st.error(f"Failed: {res.text}")
+            except Exception as e:
+                st.error(f"Error: {e}")
+
+with tab3:
+    st.subheader("Breakout Strategy Manager")
+    
+    # --- 1. Create Strategy Form ---
+    with st.expander("➕ Add New Strategy", expanded=True):
+        with st.form("strategy_form"):
+            c1, c2, c3, c4 = st.columns(4)
+            with c1:
+                s_ticker = st.text_input("Ticker", "SPY").strip().upper()
+            with c2:
+                s_entry = st.number_input("Entry Alert ($)", min_value=0.0, step=0.01)
+            with c3:
+                s_sl = st.number_input("Stop Loss ($)", min_value=0.0, step=0.01, value=0.0)
+            with c4:
+                s_qty = st.number_input("Qty", min_value=1, value=10)
+            
+            if st.form_submit_button("Create Alert"):
+                should_rerun = False
+                try:
+                    req_data = {
+                        "ticker": s_ticker, 
+                        "entry_price": s_entry, 
+                        "stop_loss": s_sl if s_sl > 0 else None, 
+                        "quantity": s_qty,
+                    }
+                    res = requests.post(f"{ST_BACKEND_URL}/strategies", json=req_data)
+                    if res.status_code == 200:
+                        st.success(f"Alert set for {s_ticker} > ${s_entry}")
+                        should_rerun = True
+                    else:
+                        st.error(f"Error: {res.text}")
+                except Exception as e:
+                    st.error(f"Req Error: {e}")
+                
+                if should_rerun:
+                    st.rerun()
+
+    st.markdown("---")
+
+    # --- 2. Recent Activity ---
+    st.subheader("Recent Activity (DB)")
+    try:
+        trades_res = requests.get(f"{ST_BACKEND_URL}/trades")
+        if trades_res.status_code == 200:
+            trades = trades_res.json()
+            if trades:
+                df = pd.DataFrame(trades)
+                st.dataframe(df[['timestamp', 'ticker', 'action', 'quantity', 'ib_order_id']], hide_index=True)
+            else:
+                st.info("No trades recorded yet.")
+    except:
+        st.warning("Could not fetch trades")
 
     # --- TAB 3: Strategy Agent ---
     with tab3:
