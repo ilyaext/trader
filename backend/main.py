@@ -21,6 +21,7 @@ ib_service = live_ib_service
 # In-memory storage for strategies (for now)
 strategies = []
 strategy_lock = None # Will be initialized in lifespan
+
 from collections import deque
 strategy_logs = deque(maxlen=50) # Keep last 50 logs
 
@@ -103,7 +104,6 @@ async def on_price_update(ticker):
                         log_strategy_event(f"✅ Strategy {strategy.ticker} EXECUTED.")
                     except Exception as e:
                         log_strategy_event(f"❌ Failed to execute strategy {strategy.ticker}: {e}")
-            # print(f"DEBUG: {strategy.ticker} Price={price} Entry={strategy.entry_price}")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -365,11 +365,7 @@ async def get_portfolio():
              # Distance: Current - Stop (assuming Long, so positive distance usually)
              item['distance_to_stop'] = market_price - stop_loss
              
-             # Risk: (Stop - AvgPrice) * Qty (Negative value indicates potential loss)
-             # Or (Stop - Current) * Qty? Usually Risk is from Entry/AvgCost.
-             # User asked "potential P/L amount if will exist buy stop loss" -> likely if stop hit from HERE or from Cost?
-             # Standard definition is Risk from Cost. But "potential P/L amount" implies result of closing trade.
-             # If sold at stop_loss, P/L = (Stop - AvgCost) * Qty.
+             # Risk: (Stop - AvgPrice) * Qty
              item['risk_amount'] = (stop_loss - avg_cost) * quantity
         
         

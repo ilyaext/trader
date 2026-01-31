@@ -340,8 +340,6 @@ with tab1:
                           wrapper = st.container(border=False)
                           if status in active_statuses:
                                wrapper = st.warning(" ", icon="⏳")
-                          if status in active_statuses:
-                               wrapper = st.warning(" ", icon="⏳")
                           
                           with wrapper:
                               r_cols = st.columns([1, 1, 1, 0.8, 0.8, 1, 1, 1, 1.2, 0.8], vertical_alignment="center")
