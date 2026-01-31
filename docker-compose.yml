@@ -5,19 +5,8 @@ services:
     container_name: trader-backend
     ports:
       - "8000:8000"
-    environment:
-      - IB_HOST=host.docker.internal # Connect to TWS on host
-      - IB_PORT=7497 # Paper trading port
-      # Market Data Type:
-      # 1=Live, 2=Frozen, 3=Delayed, 4=Delayed Frozen
-      # Use 2 (Frozen) to get Live data during RTH and Static Close after hours.
-      - IB_MARKET_DATA_TYPE=2
-      # TRADING_MODE: live or simulation
-
-      - POSTGRES_SERVER=db
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=password
-      - POSTGRES_DB=trader
+    env_file:
+      - .env
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
@@ -35,8 +24,8 @@ services:
     container_name: trader-frontend
     ports:
       - "8501:8501"
-    environment:
-      - BACKEND_URL=http://backend:8000
+    env_file:
+      - .env
     depends_on:
       - backend
     # Mount code for hot reloading
@@ -49,10 +38,8 @@ services:
     container_name: trader-db
     # ports:
     # - "5433:5432" # Removed to avoid ALL port conflicts. Backend connects internally.
-    environment:
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=password
-      - POSTGRES_DB=trader
+    env_file:
+      - .env
     volumes:
       - postgres_data:/var/lib/postgresql/data
 

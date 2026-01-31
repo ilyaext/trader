@@ -9,7 +9,7 @@ import plotly.graph_objects as go
 ST_BACKEND_URL = os.getenv("BACKEND_URL", "http://backend:8000")
 
 # Configuration
-TARGET_INVESTMENT = 3000.0
+TARGET_INVESTMENT = float(os.getenv("TARGET_INVESTMENT", "3000.0"))
 
 st.set_page_config(page_title="Trader Bot", layout="wide", page_icon="📈")
 
