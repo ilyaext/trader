@@ -186,9 +186,9 @@ async def create_strategy(req: StrategyRequest):
          raise HTTPException(status_code=400, detail=f"Position already exists for {clean_ticker}")
 
     # Check for Active Orders (Live)
-    active_orders = ib_service.get_orders()
-    # Filter for active statuses just in case, though get_orders usually returns all today's orders?
-    # Actually get_orders in main.py calls ib_service.get_orders which we should check.
+    active_orders = ib_service.get_today_orders()
+    # Filter for active statuses just in case, though get_today_orders returns all today's orders
+    # We should filter for strictly active ones here.
     # Assuming it returns a list of strict active/open orders or we filter.
     # Safe to reject if ANY active-like order exists.
     live_active = ['Submitted', 'PreSubmitted', 'PendingSubmit', 'ApiPending']

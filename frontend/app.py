@@ -407,8 +407,9 @@ with tab1:
                               # Cancel Button (Only for Active OR Simulated)
                               if status in active_statuses or status == "Simulated":
                                   # For Simulated, we don't need confirmation dialog, just delete
-                                  icon = "🗑️" if status != "Simulated" else "✖️"
-                                  help_tx = "Cancel Order" if status != "Simulated" else "Remove Simulated Order"
+                                  # For Simulated, we don't need confirmation dialog, just delete
+                                  icon = "✖️" 
+                                  help_tx = "Cancel Order"
                                   
                                   if r_cols[8].button(icon, key=f"cancel_{o['id']}", help=help_tx):
                                       if status == "Simulated":

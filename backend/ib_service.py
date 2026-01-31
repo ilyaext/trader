@@ -89,6 +89,15 @@ class IBIntegration:
             
             logger.info("✅ Connected to IBKR")
             
+            # Request All Open Orders (Fixes visibility of TWS orders)
+            # Add a small delay and try/except to avoid flooding/pacing violations on startup
+            try:
+                await asyncio.sleep(1) 
+                logger.info("Requesting All Open Orders...")
+                self.ib.reqAllOpenOrders()
+            except Exception as e:
+                logger.warning(f"Could not request open orders: {e}")
+            
             # Request Executions (Manual & Safe)
             try:
                 # Use a timeout for this specific request to avoid blocking
@@ -608,11 +617,9 @@ class IBIntegration:
                  display_price = 0.0
 
             # Handle NaN prices (IBKR sometimes returns NaN)
+            # Handle NaN prices (IBKR sometimes returns NaN)
             if display_price != display_price: 
                 display_price = 0.0
-            else:
-                 # Cancelled, Inactive, etc -> 0.0
-                 display_price = 0.0
                      
             orders_data.append({
                 "id": trade.order.orderId,
