@@ -179,6 +179,25 @@ async def create_strategy(req: StrategyRequest):
         for s in strategies:
             if s.ticker == clean_ticker and s.status == "active":
                 raise HTTPException(status_code=400, detail=f"Active strategy already exists for {clean_ticker}")
+
+    # Check for Existing Position
+    portfolio = ib_service.get_portfolio()
+    if any(p.get('ticker') == clean_ticker for p in portfolio):
+         raise HTTPException(status_code=400, detail=f"Position already exists for {clean_ticker}")
+
+    # Check for Active Orders (Live)
+    active_orders = ib_service.get_orders()
+    # Filter for active statuses just in case, though get_orders usually returns all today's orders?
+    # Actually get_orders in main.py calls ib_service.get_orders which we should check.
+    # Assuming it returns a list of strict active/open orders or we filter.
+    # Safe to reject if ANY active-like order exists.
+    live_active = ['Submitted', 'PreSubmitted', 'PendingSubmit', 'ApiPending']
+    if any(o.get('ticker') == clean_ticker and o.get('status') in live_active for o in active_orders):
+          raise HTTPException(status_code=400, detail=f"Active order already exists for {clean_ticker}")
+    
+    # Check for Active Orders (Simulated)
+    if any(o.get('ticker') == clean_ticker for o in simulated_orders):
+           raise HTTPException(status_code=400, detail=f"Simulated order already exists for {clean_ticker}")
     
 
     id = str(uuid.uuid4())

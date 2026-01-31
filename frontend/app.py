@@ -477,9 +477,9 @@ with tab3:
         with st.form("strategy_form"):
             c1, c2, c3, c4 = st.columns(4)
             with c1:
-                s_ticker = st.text_input("Ticker", "SPY").strip().upper()
+                s_ticker = st.text_input("Ticker", "").strip().upper()
             with c2:
-                s_entry = st.number_input("Entry Alert ($)", min_value=0.0, step=0.01)
+                s_entry = st.number_input("Entry Alert ($)", min_value=0.0, step=0.01, value=None)
             with c3:
                 s_sl = st.number_input("Stop Loss ($)", min_value=0.0, step=0.01, value=0.0)
             with c4:
@@ -487,21 +487,25 @@ with tab3:
             
             if st.form_submit_button("Create Alert"):
                 should_rerun = False
-                try:
-                    req_data = {
-                        "ticker": s_ticker, 
-                        "entry_price": s_entry, 
-                        "stop_loss": s_sl if s_sl > 0 else None, 
-                        "quantity": s_qty,
-                    }
-                    res = requests.post(f"{ST_BACKEND_URL}/strategies", json=req_data)
-                    if res.status_code == 200:
-                        st.success(f"Alert set for {s_ticker} > ${s_entry}")
-                        should_rerun = True
-                    else:
-                        st.error(f"Error: {res.text}")
-                except Exception as e:
-                    st.error(f"Req Error: {e}")
+                
+                if not s_ticker or s_entry is None:
+                     st.error("Please enter Ticker and Entry Price")
+                else:
+                    try:
+                        req_data = {
+                            "ticker": s_ticker, 
+                            "entry_price": s_entry, 
+                            "stop_loss": s_sl if s_sl > 0 else None, 
+                            "quantity": s_qty,
+                        }
+                        res = requests.post(f"{ST_BACKEND_URL}/strategies", json=req_data)
+                        if res.status_code == 200:
+                            st.success(f"Alert set for {s_ticker} > ${s_entry}")
+                            should_rerun = True
+                        else:
+                            st.error(f"Error: {res.text}")
+                    except Exception as e:
+                        st.error(f"Req Error: {e}")
                 
                 if should_rerun:
                     st.rerun()
