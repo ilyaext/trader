@@ -39,18 +39,30 @@ def render_sidebar_metrics():
         if acc_res.status_code == 200:
             data = acc_res.json()
             
+            # Custom Metric Helper
+            def small_metric(label, value, delta=None):
+                st.markdown(f"""
+                <div style="margin-bottom: 10px;">
+                    <span style="font-size: 0.9em; font-weight: bold; color: #888;">{label}</span><br>
+                    <span style="font-size: 1.5em; font-weight: bold;">{value}</span>
+                </div>
+                """, unsafe_allow_html=True)
+                if delta:
+                    color = "green" if "+" in delta else "red"
+                    st.markdown(f":{color}[{delta}]")
+
             # Net Liquidation
             nl = data.get('net_liquidation', 0.0)
-            st.metric("Net Liquidation", f"${nl:,.2f}")
+            small_metric("Net Liquidation", f"${nl:,.2f}")
             
             # Free Cash
             cash = data.get('total_cash', 0.0)
-            st.metric("Free Cash", f"${cash:,.2f}")
+            small_metric("Free Cash", f"${cash:,.2f}")
             
             # Daily P/L
             d_pnl = data.get('daily_pnl', 0.0)
             d_pct = data.get('daily_pnl_pct', 0.0)
-            st.metric("Daily P/L", f"${d_pnl:,.2f}", f"{d_pct:+.2f}%")
+            small_metric("Daily P/L", f"${d_pnl:,.2f}", f"{d_pct:+.2f}%")
         else:
             st.error("Data Unavailable")
     except Exception as e:
@@ -127,7 +139,7 @@ with tab1:
                     # Define columns
                     # Ticker (1), CHG% (0.8), P/L$ (1), Cur (1), Qty (0.8), Avg (1), Stop (1), Dist (1), Risk (1), Action (0.6)
                     col_ratios = [1, 0.8, 1, 1, 0.8, 1, 1, 1, 1, 0.6]
-                    headers = ["Ticker", "CHG %", "P/L $", "Cur. Price", "Qty", "Avg Price", "Stop Price", "Distance", "Risk", "Action"]
+                    headers = ["Ticker", "CHG %", "P/L $", "Cur. Price", "Qty", "Avg Price", "Stop Price", "Distance", "Risk", "Close"]
                     
                     cols = st.columns(col_ratios, vertical_alignment="center")
                     for i, h in enumerate(headers):
@@ -173,7 +185,7 @@ with tab1:
                         r_cols[8].text(fmt_usd(risk) if risk != 0 else "-")
                         
                         # Close Button
-                        if r_cols[9].button("Close", key=f"close_btn_{ticker}"):
+                        if r_cols[9].button("✖️", key=f"close_btn_{ticker}", help="Close Position"):
                             close_position_dialog(ticker, qty)
                         
                 else:
@@ -343,7 +355,7 @@ with tab1:
                       # No generic headers row if we use containers for rows (visual separation), 
                       # but a header row is good practice.
                       h_cols = st.columns([1, 0.8, 0.8, 1, 1, 1, 1.2, 1.2, 0.8])
-                      headers = ["Ticker", "Action", "Qty", "Limit", "Stop", "Price", "Status", "Time", "Wait"]
+                      headers = ["Ticker", "Action", "Qty", "Limit", "Stop", "Price", "Status", "Time", "Cancel"]
                       for i, h in enumerate(headers):
                           h_cols[i].markdown(f"**{h}**")
                       
