@@ -9,6 +9,18 @@ logger = logging.getLogger("IBService")
 
 import random
 
+# Global instance of IBIntegration
+_ib_service_instance = None
+
+def get_ib_service():
+    """
+    Returns a singleton instance of the IBIntegration class.
+    """
+    global _ib_service_instance
+    if _ib_service_instance is None:
+        _ib_service_instance = IBIntegration()
+    return _ib_service_instance
+
 class IBIntegration:
     def __init__(self):
         self.ib = IB()
@@ -666,4 +678,9 @@ class IBIntegration:
             
         return summary
 
-ib_service = IBIntegration()
+_service_instance = None
+def get_ib_service():
+    global _service_instance
+    if _service_instance is None:
+        _service_instance = IBIntegration()
+    return _service_instance

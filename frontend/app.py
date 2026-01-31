@@ -54,6 +54,27 @@ def render_sidebar_metrics():
         # st.error("Connection Error to Backend")
         pass # Health check above covers this visual
 
+    st.markdown("---")
+    
+    # --- Test Lab ---
+    with st.expander("🧪 Test Lab", expanded=False):
+        st.caption("Control 'TEST' ticker")
+        
+        with st.form("test_lab_form"):
+             t_price = st.number_input("TEST Price", value=100.0, step=0.5)
+             if st.form_submit_button("Update TEST Price"):
+                  success = False
+                  try:
+                       requests.post(f"{ST_BACKEND_URL}/test/price", json={"price": t_price})
+                       success = True
+                  except Exception as e:
+                       st.error(f"Error: {e}")
+                  
+                  if success:
+                       st.success(f"TEST = ${t_price}")
+                       time.sleep(0.5)
+                       st.rerun()
+
 with st.sidebar:
     render_sidebar_metrics()
 
@@ -130,7 +151,7 @@ with tab1:
                         # Render Row
                         r_cols = st.columns(col_ratios, vertical_alignment="center")
                         
-                        r_cols[0].text(ticker)
+                        r_cols[0].markdown(f"**{ticker}**")
                         
                         # CHG % Color
                         color = "green" if chg_pct >= 0 else "red"
@@ -207,7 +228,7 @@ with tab1:
             
             for s in active_strats:
                 cols = st.columns([1, 0.5, 1.2, 1.2, 1.2, 1, 1, 1, 0.5], vertical_alignment="center")
-                cols[0].text(s['ticker'])
+                cols[0].markdown(f"**{s['ticker']}**")
                 
                 # Manual Toggle (Inverted Live)
                 is_live = s.get('is_live', True)
@@ -318,8 +339,8 @@ with tab1:
                       
                       # No generic headers row if we use containers for rows (visual separation), 
                       # but a header row is good practice.
-                      h_cols = st.columns([1, 1, 1, 0.8, 0.8, 1, 1, 1, 1.2, 0.8])
-                      headers = ["ID", "Time", "Ticker", "Action", "Qty", "Limit", "Stop", "Price", "Status", "Wait"]
+                      h_cols = st.columns([1, 0.8, 0.8, 1, 1, 1, 1.2, 1.2, 0.8])
+                      headers = ["Ticker", "Action", "Qty", "Limit", "Stop", "Price", "Status", "Time", "Wait"]
                       for i, h in enumerate(headers):
                           h_cols[i].markdown(f"**{h}**")
                       
@@ -340,9 +361,12 @@ with tab1:
                           wrapper = st.container(border=False)
                           if status in active_statuses:
                                wrapper = st.warning(" ", icon="⏳")
+                          elif status == "Simulated":
+                               # Use Info/Blue for Simulated
+                               wrapper = st.info(" ", icon="🧪")
                           
                           with wrapper:
-                              r_cols = st.columns([1, 1, 1, 0.8, 0.8, 1, 1, 1, 1.2, 0.8], vertical_alignment="center")
+                              r_cols = st.columns([1, 0.8, 0.8, 1, 1, 1, 1.2, 1.2, 0.8], vertical_alignment="center")
                               
                               # Styling Helper
                               is_filled = status in filled_statuses
@@ -353,32 +377,46 @@ with tab1:
                                       return f":{color}[{t}]"
                                   return t
 
-                              r_cols[0].markdown(style_text(o['id']))
-                              r_cols[1].markdown(style_text(o['time']))
-                              r_cols[2].markdown(style_text(o['ticker']))
+                              # Ticker Color based on Status
+                              ticker_color = None
+                              if status in active_statuses: ticker_color = "orange"
+                              elif status == "Simulated": ticker_color = "blue"
+                              elif status == "Filled" or status in cancelled_statuses: ticker_color = "grey"
+                              
+                              r_cols[0].markdown(style_text(o['ticker'], ticker_color))
                               
                               # Action Colors
                               act = o['action']
                               act_color = "green" if act == "BUY" else "red"
                               # If filled, override to grey (or keep color? "Grey fonts" usually implies monochrome). 
                               # Let's try monochrome for full effect.
-                              r_cols[3].markdown(style_text(act, act_color))
+                              r_cols[1].markdown(style_text(act, act_color))
                               
-                              r_cols[4].markdown(style_text(int(o['total_qty'])))
+                              r_cols[2].markdown(style_text(int(o['total_qty'])))
                               
                               limit = o.get('price', 0.0) or 0.0
                               stop = o.get('stop_price', 0.0) or 0.0
                               price = o.get('current_or_filled_price', 0.0) or 0.0
                               
-                              r_cols[5].markdown(style_text(f"${limit:.2f}" if limit > 0 else "MKT"))
-                              r_cols[6].markdown(style_text(f"${stop:.2f}" if stop > 0 else "-"))
-                              r_cols[7].markdown(style_text(f"${price:.2f}"))
-                              r_cols[8].markdown(style_text(status))
+                              r_cols[3].markdown(style_text(f"${limit:.2f}" if limit > 0 else "MKT"))
+                              r_cols[4].markdown(style_text(f"${stop:.2f}" if stop > 0 else "-"))
+                              r_cols[5].markdown(style_text(f"${price:.2f}"))
+                              r_cols[6].markdown(style_text(status))
+                              r_cols[7].markdown(style_text(o['time']))
                               
-                              # Cancel Button (Only for Active)
-                              if status in active_statuses:
-                                  if r_cols[9].button("🗑️", key=f"cancel_{o['id']}", help="Cancel Order"):
-                                      confirm_cancel_dialog(o['id'], o['ticker'], act, o['total_qty'])
+                              # Cancel Button (Only for Active OR Simulated)
+                              if status in active_statuses or status == "Simulated":
+                                  # For Simulated, we don't need confirmation dialog, just delete
+                                  icon = "🗑️" if status != "Simulated" else "✖️"
+                                  help_tx = "Cancel Order" if status != "Simulated" else "Remove Simulated Order"
+                                  
+                                  if r_cols[8].button(icon, key=f"cancel_{o['id']}", help=help_tx):
+                                      if status == "Simulated":
+                                           # Direct delete for simulated
+                                           requests.post(f"{ST_BACKEND_URL}/orders/{o['id']}/cancel")
+                                           st.rerun()
+                                      else:
+                                           confirm_cancel_dialog(o['id'], o['ticker'], act, o['total_qty'])
 
                   else:
                       st.info("No active/executed orders this session.")
