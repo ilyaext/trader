@@ -380,65 +380,83 @@ with tab1:
          try:
               orders_res = requests.get(f"{ST_BACKEND_URL}/orders")
               if orders_res.status_code == 200:
-                  orders = orders_res.json()
-                  if orders:
-                      # Headers
-                      # ID, Time, Ticker, Action, Qty, Limit, Stop, Price, Status, Actions
+                  all_orders = orders_res.json()
+                  if all_orders:
+                      # Group orders: Children (Attached) follow their Parents
+                      parents = [o for o in all_orders if not o.get('parent_id') or o.get('parent_id') == 0]
+                      children = [o for o in all_orders if o.get('parent_id') and o.get('parent_id') != 0]
                       
-                      # No generic headers row if we use containers for rows (visual separation), 
-                      # but a header row is good practice.
-                      h_cols = st.columns([1, 0.8, 0.8, 1, 1, 1, 1.2, 1.2, 0.8])
-                      headers = ["Ticker", "Action", "Qty", "Limit", "Stop", "Price", "Status", "Time", "Cancel"]
+                      final_orders = []
+                      processed_child_ids = set()
+                      for p in parents:
+                          final_orders.append(p)
+                          for c in children:
+                              if c.get('parent_id') == p.get('id'):
+                                  final_orders.append(c)
+                                  processed_child_ids.add(c.get('id'))
+                      # Add orphaned children if any
+                      for c in children:
+                          if c.get('id') not in processed_child_ids:
+                              final_orders.append(c)
+
+                      # Headers
+                      h_cols = st.columns([1, 1, 0.8, 1, 1, 1, 1.2, 1.2, 0.8])
+                      headers = ["Ticker", "Action/Type", "Qty", "Limit", "Stop", "Price", "Status", "Time", "Cancel"]
                       for i, h in enumerate(headers):
                           h_cols[i].markdown(f"**{h}**")
                       
-                      for o in orders:
-                          # Determine Style based on Status
+                      for o in final_orders:
                           status = o['status']
+                          is_child = o.get('parent_id') and o.get('parent_id') != 0
                           
                           # Active statuses
                           active_statuses = ['Submitted', 'PreSubmitted', 'PendingSubmit', 'ApiPending']
                           filled_statuses = ['Filled']
                           cancelled_statuses = ['Cancelled', 'Inactive']
                           
-                          # Use the container for the row
-                          # Note: st.success/warning/etc creates a bordered colored box.
-                          # We put columns INSIDE it.
-                          
-                          # Container Style
+                          # Container Style for row
                           wrapper = st.container(border=False)
                           if status in active_statuses:
                                wrapper = st.warning(" ", icon="⏳")
                           elif status == "Simulated":
-                               # Use Info/Blue for Simulated
                                wrapper = st.info(" ", icon="🧪")
                           
                           with wrapper:
-                              r_cols = st.columns([1, 0.8, 0.8, 1, 1, 1, 1.2, 1.2, 0.8], vertical_alignment="center")
+                              r_cols = st.columns([1, 1, 0.8, 1, 1, 1, 1.2, 1.2, 0.8], vertical_alignment="center")
                               
                               # Styling Helper
                               is_filled = status in filled_statuses
-                              def style_text(t, color=None):
+                              def style_text(t, color=None, bold=False):
                                   if is_filled:
-                                      return f":grey[{t}]"
-                                  if color:
-                                      return f":{color}[{t}]"
-                                  return t
+                                      res = f":grey[{t}]"
+                                  elif color:
+                                      res = f":{color}[{t}]"
+                                  else:
+                                      res = t
+                                  return f"**{res}**" if bold else res
 
-                              # Ticker Color based on Status
+                              # Ticker (Indent if child)
+                              ticker_display = o['ticker']
+                              if is_child:
+                                   ticker_display = f"&nbsp;&nbsp;&nbsp;└─ {o['ticker']}"
+                              
                               ticker_color = None
                               if status in active_statuses: ticker_color = "orange"
                               elif status == "Simulated": ticker_color = "blue"
-                              elif status == "Filled" or status in cancelled_statuses: ticker_color = "grey"
+                              elif status in cancelled_statuses: ticker_color = "grey"
                               
-                              r_cols[0].markdown(style_text(o['ticker'], ticker_color))
+                              r_cols[0].markdown(style_text(ticker_display, ticker_color, bold=not is_child))
                               
-                              # Action Colors
+                              # Action / Type (Highlight STOP if child)
                               act = o['action']
+                              o_type = o.get('type', '')
                               act_color = "green" if act == "BUY" else "red"
-                              # If filled, override to grey (or keep color? "Grey fonts" usually implies monochrome). 
-                              # Let's try monochrome for full effect.
-                              r_cols[1].markdown(style_text(act, act_color))
+                              
+                              if is_child:
+                                  type_label = "**STOP**" if "STP" in o_type.upper() or "STOP" in o_type.upper() else o_type
+                                  r_cols[1].markdown(style_text(f"{act} {type_label}", act_color))
+                              else:
+                                  r_cols[1].markdown(style_text(f"{act} {o_type}", act_color))
                               
                               r_cols[2].markdown(style_text(int(o['total_qty'])))
                               
@@ -446,22 +464,16 @@ with tab1:
                               stop = o.get('stop_price', 0.0) or 0.0
                               price = o.get('current_or_filled_price', 0.0) or 0.0
                               
-                              r_cols[3].markdown(style_text(f"${limit:.2f}" if limit > 0 else "MKT"))
+                              r_cols[3].markdown(style_text(f"${limit:.2f}" if limit > 0 else "-"))
                               r_cols[4].markdown(style_text(f"${stop:.2f}" if stop > 0 else "-"))
                               r_cols[5].markdown(style_text(f"${price:.2f}"))
                               r_cols[6].markdown(style_text(status))
                               r_cols[7].markdown(style_text(o['time']))
                               
-                              # Cancel Button (Only for Active OR Simulated)
+                              # Cancel Button (Use unique key per order)
                               if status in active_statuses or status == "Simulated":
-                                  # For Simulated, we don't need confirmation dialog, just delete
-                                  # For Simulated, we don't need confirmation dialog, just delete
-                                  icon = "✖️" 
-                                  help_tx = "Cancel Order"
-                                  
-                                  if r_cols[8].button(icon, key=f"cancel_{o['id']}", help=help_tx):
+                                  if r_cols[8].button("✖️", key=f"cancel_{o['id']}_{o['ticker']}_{o['action']}_{o.get('parent_id', 0)}"):
                                       if status == "Simulated":
-                                           # Direct delete for simulated
                                            requests.post(f"{ST_BACKEND_URL}/orders/{o['id']}/cancel")
                                            st.rerun()
                                       else:
@@ -475,8 +487,6 @@ with tab1:
               st.error(f"Connection Error: {e}")
 
     render_orders()
-
-
 
 with tab2:
     st.subheader("Download Historical Data")
@@ -623,8 +633,3 @@ with tab3:
             pass
 
         render_strategy_agent()
-
-
-
-
-

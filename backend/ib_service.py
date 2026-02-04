@@ -635,7 +635,8 @@ class IBIntegration:
                 "avg_fill_price": trade.orderStatus.avgFillPrice,
                 "current_or_filled_price": display_price,
                 "status": status,
-                "type": trade.order.orderType
+                "type": trade.order.orderType,
+                "parent_id": trade.order.parentId
             })
         
         # Sort by ID descending (newest first usually)
