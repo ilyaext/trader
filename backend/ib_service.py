@@ -251,6 +251,8 @@ class IBIntegration:
         else:
             parent = MarketOrder(action, quantity)
         
+        # Ensure we have an Order ID for the parent to link the child
+        parent.orderId = self.ib.client.getReqId()
         orders_to_place = [parent]
 
         # Stop Loss (Child)

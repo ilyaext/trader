@@ -199,6 +199,39 @@ with tab1:
 
     st.markdown("---")
 
+    # --- Manual Buy Order ---
+    with st.expander("🚀 Manual Buy Order", expanded=False):
+        c1, c2, c3, c4 = st.columns([1, 1, 1, 1.2], vertical_alignment="bottom")
+        with c1:
+            m_ticker = st.text_input("Ticker", placeholder="AAPL", key="m_ticker").strip().upper()
+        with c2:
+            m_qty = st.number_input("Quantity", min_value=1, step=1, value=1, key="m_qty")
+        with c3:
+            m_sl = st.number_input("Stop Loss ($)", min_value=0.0, step=0.01, value=0.0, key="m_sl")
+        with c4:
+            if st.button("Place Buy Order", type="primary", use_container_width=True):
+                if m_ticker:
+                    try:
+                        payload = {
+                            "ticker": m_ticker,
+                            "action": "BUY",
+                            "quantity": int(m_qty),
+                            "stop_loss": m_sl if m_sl > 0 else None
+                        }
+                        res = requests.post(f"{ST_BACKEND_URL}/order", json=payload)
+                        if res.status_code == 200:
+                            st.success(f"Order placed for {m_ticker}")
+                            time.sleep(1)
+                            st.rerun()
+                        else:
+                            st.error(f"Error: {res.text}")
+                    except Exception as e:
+                        st.error(f"Request Error: {e}")
+                else:
+                    st.warning("Please enter a Ticker")
+
+    st.markdown("---")
+
     # --- Monitored Alerts (Strategies) ---
     st.subheader("📡 Monitored")
 

@@ -450,6 +450,7 @@ class OrderRequest(BaseModel):
     ticker: str
     action: str = "BUY"
     quantity: int = 1
+    stop_loss: float = None # Optional attached stop loss
 
 
 @app.get("/quote/{ticker}")
@@ -479,7 +480,12 @@ async def place_order(order: OrderRequest, db: Session = Depends(get_db)):
     
     try:
         # Place order on IBKR
-        ib_trade = await ib_service.place_order(order.ticker, order.action, order.quantity)
+        ib_trade = await ib_service.place_order(
+            order.ticker, 
+            order.action, 
+            order.quantity,
+            stop_loss_price=order.stop_loss
+        )
         
         # Record to DB (Optimistic recording for Hello World)
         db_trade = Trade(
