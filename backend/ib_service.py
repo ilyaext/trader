@@ -39,11 +39,13 @@ class IBIntegration:
         
         # Event Callbacks
         self.price_callbacks = []
+        self.order_callbacks = [] # WebSocket or logic listeners
         self.ib.pendingTickersEvent += self.on_pending_tickers
         self.ib.disconnectedEvent += self.on_disconnected
         self.ib.errorEvent += self.on_error
+        self.ib.orderStatusEvent += self.on_order_status
         self.client_id = random.randint(2, 999) 
-        self.last_heartbeat = datetime.now() # Initialize to now so startup doesn't fail immediately 
+        self.last_heartbeat = datetime.now() 
 
     def on_error(self, reqId, errorCode, errorString, contract):
         """Handle IBKR API errors"""
@@ -60,6 +62,9 @@ class IBIntegration:
     def on_order_status(self, trade):
         """Callback for real-time order updates from IBKR"""
         print(f"🔔 IBKR NOTIFICATION: Order {trade.order.orderId} Status: {trade.orderStatus.status} | Filled: {trade.orderStatus.filled}")
+        # Notify subscribers (WebSockets)
+        for cb in self.order_callbacks:
+            asyncio.create_task(cb(trade))
 
     def on_disconnected(self):
         print("⛔ IBKR DISCONNECTED!")
@@ -139,6 +144,15 @@ class IBIntegration:
         except Exception as e:
             logger.warning(f"Heartbeat failed: {e}")
             return False
+
+    def sync_open_orders(self):
+        """Manually trigger a pull of all open orders from IBKR (including manual TWS ones)"""
+        if self.ib.isConnected():
+             print("🔄 Syncing Open Orders with IBKR...")
+             self.ib.reqAllOpenOrders()
+
+    def register_order_callback(self, cb):
+        self.order_callbacks.append(cb)
 
     async def robust_qualify_contract(self, ticker_symbol):
         """Attempts to qualify a stock contract with multiple fallback strategies"""

@@ -1,13 +1,13 @@
-from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks
+from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 from contextlib import asynccontextmanager
 from database import init_db, get_db, Trade
 from sqlalchemy.orm import Session
 from ib_service import get_ib_service as live_get_ib_service
-# from mock_ib_service import mock_ib_service
 import asyncio
 import os
 import uuid
+import json
 import random
 from datetime import datetime
 from models import Strategy, StrategyRequest, StrategyUpdate
@@ -29,11 +29,34 @@ test_state = {"price": 100.0} # Virtual price for TEST
 from collections import deque
 strategy_logs = deque(maxlen=50) # Keep last 50 logs
 
+# WebSocket Connection Manager
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: list[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+
+    def disconnect(self, websocket: WebSocket):
+        self.active_connections.remove(websocket)
+
+    async def broadcast(self, message: dict):
+        for connection in self.active_connections:
+            try:
+                await connection.send_text(json.dumps(message))
+            except:
+                pass
+
+manager = ConnectionManager()
+
 def log_strategy_event(msg: str):
-    """Log an event to the global buffer"""
+    """Log an event to the global buffer and broadcast via WS"""
     timestamp = datetime.now().strftime("%H:%M:%S")
-    strategy_logs.appendleft(f"[{timestamp}] {msg}")
+    formatted = f"[{timestamp}] {msg}"
+    strategy_logs.appendleft(formatted)
     print(f"STRATEGY LOG: {msg}")
+    asyncio.create_task(manager.broadcast({"type": "log", "data": formatted}))
 
 
 
@@ -117,8 +140,26 @@ async def on_price_update(ticker):
     if price <= 0:
         return
 
+    # Broadcast Price Update
+    asyncio.create_task(manager.broadcast({
+        "type": "price",
+        "ticker": symbol,
+        "price": price
+    }))
+
     # Pass to strategy checker
     await check_strategies(symbol, price)
+
+async def on_order_update(trade):
+    """Callback for real-time order status changes"""
+    # Simply broadcast the refresh signal or the full data
+    # For simplicity, we signal a refresh of the entire order list
+    # or we can send the partial update. React works well with a "refresh" signal.
+    asyncio.create_task(manager.broadcast({
+        "type": "order_update",
+        "order_id": trade.order.orderId,
+        "status": trade.orderStatus.status
+    }))
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -128,8 +169,9 @@ async def lifespan(app: FastAPI):
     
     init_db()
     
-    # Register Protocol Callback
+    # Register Callbacks
     ib_service.register_callback(on_price_update)
+    ib_service.register_order_callback(on_order_update)
     
     # Start background connection loop
     task = asyncio.create_task(check_connection_loop())
@@ -157,6 +199,11 @@ async def check_connection_loop():
                     for s in strategies:
                         if s.status == "active":
                             await ib_service.subscribe_market_data(s.ticker)
+            else:
+                # PERIODIC SYNC: Force pull latest orders to catch manual TWS actions
+                # Every 3 loops (~15 seconds)
+                if int(datetime.now().timestamp()) % 15 < 5:
+                    ib_service.sync_open_orders()
                         
         except Exception as e:
             print(f"Error in connection loop: {e}")
@@ -580,6 +627,16 @@ async def get_account_summary():
 @app.get("/health")
 async def health():
     return {"status": "ok", "ib_connected": ib_service.check_connection}
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await manager.connect(websocket)
+    try:
+        while True:
+            # Keep connection alive
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
 
 
 

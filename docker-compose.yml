@@ -18,19 +18,23 @@ services:
       - ./backend:/app
       - ./history:/app/history
 
-  # User Interface (Streamlit)
+  # User Interface (React + Vite)
   frontend:
     build: ./frontend
     container_name: trader-frontend
     ports:
-      - "8501:8501"
+      - "3000:3000"
     env_file:
       - .env
+    environment:
+      - VITE_BACKEND_URL=http://backend:8000
+      - VITE_WS_URL=ws://backend:8000
     depends_on:
       - backend
     # Mount code for hot reloading
     volumes:
       - ./frontend:/app
+      - /app/node_modules
 
   # Database (PostgreSQL)
   db:
