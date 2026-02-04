@@ -98,7 +98,6 @@ if "ticker" not in st.session_state:
     st.session_state.ticker = "SPY"
 
 # --- Main Content ---
-# --- Main Content ---
 tab1, tab2, tab3 = st.tabs(["Trading", "Historical Data", "Strategy Agent"])
 
 with tab1:
@@ -108,12 +107,10 @@ with tab1:
         if st.button("Confirm Sell", type="primary"):
             should_rerun = False
             try:
-                # Note: Backend expects query param 'ticker' for this endpoint based on main.py analysis
-                # requests.post(..., params={"ticker": ticker})
                 res = requests.post(f"{ST_BACKEND_URL}/positions/close", params={"ticker": ticker})
                 if res.status_code == 200:
                     st.success(f"Order Submitted: Close {ticker}")
-                    time.sleep(1) # Give it a moment to read
+                    time.sleep(1) 
                     should_rerun = True
                 else:
                     st.error(f"Failed: {res.text}")
@@ -131,13 +128,6 @@ with tab1:
             if port_res.status_code == 200:
                 portfolio = port_res.json()
                 if portfolio:
-                    # Header
-                    # Cols: Ticker, CHG %, P/L $, Cur. Price, Qty, Avg Price, Stop Price, Distance, Risk, Close
-                    # Ratios roughly match the previous dataframe columns but simplified for layout
-                    # Total 10 columns
-                    
-                    # Define columns
-                    # Ticker (1), CHG% (0.8), P/L$ (1), Cur (1), Qty (0.8), Avg (1), Stop (1), Dist (1), Risk (1), Action (0.6)
                     col_ratios = [1, 0.8, 1, 1, 0.8, 1, 1, 1, 1, 0.6]
                     headers = ["Ticker", "CHG %", "P/L $", "Cur. Price", "Qty", "Avg Price", "Stop Price", "Distance", "Risk", "Close"]
                     
@@ -146,15 +136,12 @@ with tab1:
                         cols[i].markdown(f"**{h}**")
                     
                     for p in portfolio:
-                        # Extract data
                         ticker = p.get('ticker')
                         qty = p.get('quantity', 0)
                         
-                        # Formatting helpers
                         def fmt_usd(v): return f"${v:,.2f}"
                         def fmt_pct(v): return f"{v:+.2f}%"
                         
-                        # Data prep
                         chg_pct = p.get('today_pnl_pct', 0.0)
                         pnl_doll = p.get('today_pnl', 0.0)
                         cur_price = p.get('market_price', 0.0)
@@ -163,31 +150,20 @@ with tab1:
                         dist = p.get('distance_to_stop', 0.0)
                         risk = p.get('risk_amount', 0.0)
                         
-                        # Render Row
                         r_cols = st.columns(col_ratios, vertical_alignment="center")
-                        
                         r_cols[0].markdown(f"**{ticker}**")
-                        
-                        # CHG % Color
                         color = "green" if chg_pct >= 0 else "red"
                         r_cols[1].markdown(f":{color}[{fmt_pct(chg_pct)}]")
-                        
-                        # P/L $ Color
                         color_pnl = "green" if pnl_doll >= 0 else "red"
                         r_cols[2].markdown(f":{color_pnl}[{fmt_usd(pnl_doll)}]")
-                        
                         r_cols[3].text(fmt_usd(cur_price))
                         r_cols[4].text(f"{int(qty)}")
                         r_cols[5].text(fmt_usd(avg_cost))
-                        
                         r_cols[6].text(fmt_usd(stop_loss) if stop_loss > 0 else "-")
                         r_cols[7].text(fmt_usd(dist) if dist != 0 else "-")
                         r_cols[8].text(fmt_usd(risk) if risk != 0 else "-")
-                        
-                        # Close Button
                         if r_cols[9].button("✖️", key=f"close_btn_{ticker}", help="Close Position"):
                             close_position_dialog(ticker, qty)
-                        
                 else:
                     st.info("No open positions.")
             else:
@@ -239,8 +215,6 @@ with tab1:
     def render_monitored_strategies():
         strategies = []
         error_msg = None
-        
-        # 1. Fetch Data
         try:
             strat_res = requests.get(f"{ST_BACKEND_URL}/strategies")
             if strat_res.status_code == 200:
@@ -250,19 +224,12 @@ with tab1:
         except Exception as e:
              error_msg = f"Could not load strategies: {e}"
         
-        # 2. Render Error if any
         if error_msg:
              st.error(error_msg)
              return
 
-        # 3. Render UI
         active_strats = [s for s in strategies if s.get('status') == 'active']
-        
         if active_strats:
-            # Display as a table with "Delete" buttons
-            # Using columns for layout
-            
-            # Cols: Ticker, Manual, Price, Daily %, Entry Alert, Update, Stop Loss, Qty, Action
             header_cols = st.columns([1, 0.5, 1.2, 1.2, 1.2, 1, 1, 1, 0.5], vertical_alignment="center") 
             header_cols[0].markdown("**Ticker**")
             header_cols[1].markdown("**Manual**")
@@ -277,68 +244,43 @@ with tab1:
             for s in active_strats:
                 cols = st.columns([1, 0.5, 1.2, 1.2, 1.2, 1, 1, 1, 0.5], vertical_alignment="center")
                 cols[0].markdown(f"**{s['ticker']}**")
-                
-                # Manual Toggle (Inverted Live)
-                is_live = s.get('is_live', True)
-                is_manual = not is_live
+                is_manual = not s.get('is_live', True)
                 new_manual = cols[1].checkbox(" ", value=is_manual, key=f"manual_{s['id']}", label_visibility="collapsed")
-                
                 if new_manual != is_manual:
-                    # If Manual Checked (True) -> Live = False
-                    # Update Backend
                     requests.patch(f"{ST_BACKEND_URL}/strategies/{s['id']}", json={"is_live": not new_manual})
-                    # Update local state so UI reflects change immediately without rerun
                     s['is_live'] = not new_manual
 
-                # Display Price (Read-Only in Table)
                 c_price = s.get('current_price', 0.0) or 0.0
                 cols[2].text(f"${c_price:.2f}")
-
-                # Calculate Daily % (Backend Provided)
                 daily_pct = s.get('daily_change_pct')
                 if daily_pct is not None:
                     color = "green" if daily_pct >= 0 else "red"
                     cols[3].markdown(f":{color}[{daily_pct:+.2f}%]")
                 else:
                     cols[3].text("-")
-
-                # Entry Alert
                 cols[4].text(f"${s['entry_price']:.2f}")
-
-                # Display Last Update
                 l_updated = s.get('last_updated')
                 cols[5].text(f"{l_updated}" if l_updated else "-")
-                
                 cols[6].text(f"${s['stop_loss']:.2f}" if s['stop_loss'] else "-")
                 cols[7].text(int(s['quantity']))
-                
                 if cols[8].button("❌", key=f"del_{s['id']}"):
                     requests.delete(f"{ST_BACKEND_URL}/strategies/{s['id']}")
-                    # Locally mark as deleted (status changed) so manual_strats filter works if needed
                     s['status'] = 'deleted'
                     st.rerun()
             
-            # --- Manual Price Injection Section ---
             form_placeholder = st.empty()
             manual_strats = [s for s in active_strats if not s.get('is_live', True)]
-            
             if manual_strats:
                 with form_placeholder.container():
                      st.markdown("### 🛠️ Manual Price Injection")
-                     # Use a static key to avoid lifecycle issues, relying on the container to redraw
                      with st.form(key="manual_price_update_form"):
-                        c1, c2, c3 = st.columns([2, 2, 1], vertical_alignment="bottom") # Align bottom for button
-                        
+                        c1, c2, c3 = st.columns([2, 2, 1], vertical_alignment="bottom")
                         strat_options = {s['ticker']: s['id'] for s in manual_strats}
-                        
                         with c1:
                             target_ticker = st.selectbox("Select Strategy", options=list(strat_options.keys()))
-                        
                         selected_id = strat_options.get(target_ticker)
-                        
                         with c2:
                              new_manual_price = st.number_input("New Price ($)", min_value=0.0, step=0.01)
-                        
                         with c3:
                             if st.form_submit_button("Update Price"):
                                 if selected_id:
@@ -357,7 +299,6 @@ with tab1:
     def confirm_cancel_dialog(order_id, ticker, action, qty):
         st.warning(f"Are you sure you want to CANCEL Order #{order_id}?")
         st.markdown(f"**{action} {qty} {ticker}**")
-        
         if st.button("Confirm Cancel", type="primary"):
             should_rerun = False
             try:
@@ -370,7 +311,6 @@ with tab1:
                     st.error(f"Failed: {res.text}")
             except Exception as e:
                  st.error(f"Error: {e}")
-            
             if should_rerun:
                  st.rerun()
 
@@ -382,39 +322,39 @@ with tab1:
               if orders_res.status_code == 200:
                   all_orders = orders_res.json()
                   if all_orders:
-                      # Group orders: Children (Attached) follow their Parents
+                      # Extract Parent and Child relationships
                       parents = [o for o in all_orders if not o.get('parent_id') or o.get('parent_id') == 0]
                       children = [o for o in all_orders if o.get('parent_id') and o.get('parent_id') != 0]
                       
-                      final_orders = []
-                      processed_child_ids = set()
+                      # Look for children (Stop Loss) and attach their info to the parent
                       for p in parents:
-                          final_orders.append(p)
                           for c in children:
                               if c.get('parent_id') == p.get('id'):
-                                  final_orders.append(c)
-                                  processed_child_ids.add(c.get('id'))
-                      # Add orphaned children if any
-                      for c in children:
-                          if c.get('id') not in processed_child_ids:
-                              final_orders.append(c)
+                                  p['attached_stop_price'] = c.get('stop_price')
+                                  p['attached_stop_qty'] = c.get('total_qty')
+                                  p['attached_stop_action'] = c.get('action')
+                                  p['attached_stop_status'] = c.get('status')
+                                  break
+                      
+                      orders = parents
+                      processed_parent_ids = [p.get('id') for p in parents]
+                      orphans = [c for c in children if c.get('parent_id') not in processed_parent_ids]
+                      orders.extend(orphans)
 
                       # Headers
-                      h_cols = st.columns([1, 1, 0.8, 1, 1, 1, 1.2, 1.2, 0.8])
-                      headers = ["Ticker", "Action/Type", "Qty", "Limit", "Stop", "Price", "Status", "Time", "Cancel"]
+                      # Using 10 columns to split Stop Loss into sub-columns
+                      col_ratios = [1, 1, 0.7, 0.8, 0.6, 0.8, 0.8, 1, 1, 0.6]
+                      h_cols = st.columns(col_ratios)
+                      headers = ["Ticker", "Type", "Qty", "Limit", "SL Qty", "SL Val", "Price", "Status", "Time", "Cancel"]
                       for i, h in enumerate(headers):
                           h_cols[i].markdown(f"**{h}**")
                       
-                      for o in final_orders:
+                      for o in orders:
                           status = o['status']
-                          is_child = o.get('parent_id') and o.get('parent_id') != 0
-                          
-                          # Active statuses
                           active_statuses = ['Submitted', 'PreSubmitted', 'PendingSubmit', 'ApiPending']
                           filled_statuses = ['Filled']
                           cancelled_statuses = ['Cancelled', 'Inactive']
                           
-                          # Container Style for row
                           wrapper = st.container(border=False)
                           if status in active_statuses:
                                wrapper = st.warning(" ", icon="⏳")
@@ -422,63 +362,69 @@ with tab1:
                                wrapper = st.info(" ", icon="🧪")
                           
                           with wrapper:
-                              r_cols = st.columns([1, 1, 0.8, 1, 1, 1, 1.2, 1.2, 0.8], vertical_alignment="center")
-                              
-                              # Styling Helper
-                              is_filled = status in filled_statuses
-                              def style_text(t, color=None, bold=False):
-                                  if is_filled:
-                                      res = f":grey[{t}]"
-                                  elif color:
-                                      res = f":{color}[{t}]"
-                                  else:
-                                      res = t
-                                  return f"**{res}**" if bold else res
+                               r_cols = st.columns(col_ratios, vertical_alignment="center")
+                               is_filled = status in filled_statuses
+                               # SL matches active if it's not filled/cancelled
+                               sl_status = o.get('attached_stop_status', '')
+                               sl_active = sl_status in active_statuses or sl_status == "Simulated"
+                               
+                               def style_text(t, color=None, bold=False, force_grey=False):
+                                   txt = str(t)
+                                   if force_grey:
+                                       res = f":grey[{txt}]"
+                                   elif color:
+                                       res = f":{color}[{txt}]"
+                                   else:
+                                       res = txt
+                                   return f"**{res}**" if bold else res
 
-                              # Ticker (Indent if child)
-                              ticker_display = o['ticker']
-                              if is_child:
-                                   ticker_display = f"&nbsp;&nbsp;&nbsp;└─ {o['ticker']}"
-                              
-                              ticker_color = None
-                              if status in active_statuses: ticker_color = "orange"
-                              elif status == "Simulated": ticker_color = "blue"
-                              elif status in cancelled_statuses: ticker_color = "grey"
-                              
-                              r_cols[0].markdown(style_text(ticker_display, ticker_color, bold=not is_child))
-                              
-                              # Action / Type (Highlight STOP if child)
-                              act = o['action']
-                              o_type = o.get('type', '')
-                              act_color = "green" if act == "BUY" else "red"
-                              
-                              if is_child:
-                                  type_label = "**STOP**" if "STP" in o_type.upper() or "STOP" in o_type.upper() else o_type
-                                  r_cols[1].markdown(style_text(f"{act} {type_label}", act_color))
-                              else:
-                                  r_cols[1].markdown(style_text(f"{act} {o_type}", act_color))
-                              
-                              r_cols[2].markdown(style_text(int(o['total_qty'])))
-                              
-                              limit = o.get('price', 0.0) or 0.0
-                              stop = o.get('stop_price', 0.0) or 0.0
-                              price = o.get('current_or_filled_price', 0.0) or 0.0
-                              
-                              r_cols[3].markdown(style_text(f"${limit:.2f}" if limit > 0 else "-"))
-                              r_cols[4].markdown(style_text(f"${stop:.2f}" if stop > 0 else "-"))
-                              r_cols[5].markdown(style_text(f"${price:.2f}"))
-                              r_cols[6].markdown(style_text(status))
-                              r_cols[7].markdown(style_text(o['time']))
-                              
-                              # Cancel Button (Use unique key per order)
-                              if status in active_statuses or status == "Simulated":
-                                  if r_cols[8].button("✖️", key=f"cancel_{o['id']}_{o['ticker']}_{o['action']}_{o.get('parent_id', 0)}"):
-                                      if status == "Simulated":
-                                           requests.post(f"{ST_BACKEND_URL}/orders/{o['id']}/cancel")
-                                           st.rerun()
-                                      else:
-                                           confirm_cancel_dialog(o['id'], o['ticker'], act, o['total_qty'])
-
+                               ticker_display = o['ticker']
+                               ticker_color = None
+                               if status in active_statuses: ticker_color = "orange"
+                               elif status == "Simulated": ticker_color = "blue"
+                               elif status in cancelled_statuses: ticker_color = "grey"
+                               
+                               # Ticker greys out only if parent is filled AND SL is not active, or parent is cancelled
+                               ticker_grey = (is_filled and not sl_active) or (status in cancelled_statuses)
+                               r_cols[0].markdown(style_text(ticker_display, ticker_color, bold=True, force_grey=ticker_grey))
+                               
+                               act = o['action']
+                               o_type = o.get('type', '')
+                               act_color = "green" if act == "BUY" else "red"
+                               # Type greys out immediately upon parent fill
+                               r_cols[1].markdown(style_text(f"{act} {o_type}", act_color, force_grey=is_filled or status in cancelled_statuses))
+                               
+                               r_cols[2].markdown(style_text(int(o['total_qty']), force_grey=is_filled or status in cancelled_statuses))
+                               limit = o.get('price', 0.0) or 0.0
+                               price = o.get('current_or_filled_price', 0.0) or 0.0
+                               r_cols[3].markdown(style_text(f"${limit:.2f}" if limit > 0 else "MKT", force_grey=is_filled or status in cancelled_statuses))
+                               
+                               # --- Stop Loss Sub-Columns ---
+                               stop_val = o.get('attached_stop_price', 0.0) or o.get('stop_price', 0.0) or 0.0
+                               s_qty = o.get('attached_stop_qty', 0)
+                               s_action = o.get('attached_stop_action', '')
+                               
+                               if stop_val > 0:
+                                   s_color = "red" if s_action == "SELL" else "green" if s_action == "BUY" else None
+                                   # Stop Loss greys out only when SL itself is not active
+                                   sl_grey = not sl_active
+                                   r_cols[4].markdown(style_text(int(s_qty), s_color, force_grey=sl_grey))
+                                   r_cols[5].markdown(style_text(f"${stop_val:.2f}", s_color, bold=True, force_grey=sl_grey))
+                               else:
+                                   r_cols[4].markdown(style_text("-", force_grey=is_filled or status in cancelled_statuses))
+                                   r_cols[5].markdown(style_text("-", force_grey=is_filled or status in cancelled_statuses))
+                               
+                               r_cols[6].markdown(style_text(f"${price:.2f}", force_grey=is_filled and not sl_active))
+                               r_cols[7].markdown(style_text(status, force_grey=is_filled and not sl_active))
+                               r_cols[8].markdown(style_text(o['time'], force_grey=is_filled and not sl_active))
+                               
+                               if status in active_statuses or status == "Simulated":
+                                   if r_cols[9].button("✖️", key=f"cancel_{o['id']}_{o['ticker']}"):
+                                       if status == "Simulated":
+                                            requests.post(f"{ST_BACKEND_URL}/orders/{o['id']}/cancel")
+                                            st.rerun()
+                                       else:
+                                            confirm_cancel_dialog(o['id'], o['ticker'], act, o['total_qty'])
                   else:
                       st.info("No active/executed orders this session.")
               else:
@@ -490,12 +436,8 @@ with tab1:
 
 with tab2:
     st.subheader("Download Historical Data")
-    
-    # Ticker Input (Moved from Sidebar)
     ticker = st.text_input("Ticker Symbol", value=st.session_state.ticker, key="h_ticker").strip().upper()
-    # Update session state for persistence
     st.session_state.ticker = ticker
-    
     h_col1, h_col2, h_col3 = st.columns(3)
     with h_col1:
         start_date = st.date_input("Start Date", value=pd.to_datetime("today") - pd.Timedelta(days=7), key="h_start")
@@ -505,7 +447,6 @@ with tab2:
         bar_size = st.selectbox("Bar Size", ["1 min", "5 mins", "1 hour", "1 day"], index=0, key="h_bar")
         
     st.caption(f"Requesting: {ticker} from {start_date} to {end_date} ({bar_size})")
-    
     if st.button("Download Data", type="primary"):
         if ib_status != "Connected":
             st.error("Cannot download: IBKR Disconnected")
@@ -519,7 +460,6 @@ with tab2:
                 }
                 with st.spinner(f"Downloading {bar_size} data from IBKR..."):
                     res = requests.post(f"{ST_BACKEND_URL}/history/download", json=payload)
-                    
                 if res.status_code == 200:
                     data = res.json()
                     st.success(f"Success! Saved to: {data['file']}")
@@ -530,27 +470,19 @@ with tab2:
 
 with tab3:
     st.subheader("Breakout Strategy Manager")
-    
-    # --- 1. Create Strategy Form ---
-
     with st.expander("➕ Add New Strategy", expanded=True):
-        # State Initialization for Form
         if "f_ticker" not in st.session_state: st.session_state.f_ticker = ""
         if "f_entry" not in st.session_state: st.session_state.f_entry = None
         if "f_sl" not in st.session_state: st.session_state.f_sl = 0.0
         if "f_qty" not in st.session_state: st.session_state.f_qty = 1
 
-        # Callback for Entry Price Change
         def on_entry_change():
             if st.session_state.f_entry and st.session_state.f_entry > 0:
-                # Auto-Calc Stop Loss (Entry - 3%)
                 st.session_state.f_sl = round(st.session_state.f_entry * 0.97, 2)
-                # Auto-Calc Qty (Target / Entry)
                 if st.session_state.f_entry > 0:
                     st.session_state.f_qty = int(round(TARGET_INVESTMENT / st.session_state.f_entry))
 
         c1, c2, c3, c4 = st.columns(4, vertical_alignment="bottom")
-        
         with c1:
             st.text_input("Ticker", key="f_ticker", placeholder="")
         with c2:
@@ -560,18 +492,15 @@ with tab3:
         with c4:
             st.number_input("Qty", min_value=1, key="f_qty")
         
-        # Callback for Submission
         def submit_strategy():
             s_ticker = st.session_state.f_ticker.strip().upper()
             s_entry = st.session_state.f_entry
             s_sl = st.session_state.f_sl
             s_qty = st.session_state.f_qty
-            
             if not s_ticker or not s_entry:
                 st.session_state.form_error = "Please enter Ticker and Entry Price"
                 st.session_state.form_success = None
                 return
-
             try:
                 req_data = {
                     "ticker": s_ticker, 
@@ -583,8 +512,6 @@ with tab3:
                 if res.status_code == 200:
                     st.session_state.form_success = f"Alert set for {s_ticker} > ${s_entry}"
                     st.session_state.form_error = None
-                    
-                    # RESET FORM (Safe in callback)
                     st.session_state.f_ticker = ""
                     st.session_state.f_entry = None
                     st.session_state.f_sl = 0.0
@@ -598,20 +525,14 @@ with tab3:
 
         if st.button("Create Alert", type="primary", on_click=submit_strategy):
             pass
-        
-        # Display Messages
         if "form_error" in st.session_state and st.session_state.form_error:
             st.error(st.session_state.form_error)
-            # Clear after display so it doesn't persist forever
             st.session_state.form_error = None
-            
         if "form_success" in st.session_state and st.session_state.form_success:
             st.success(st.session_state.form_success)
             st.session_state.form_success = None
 
     st.markdown("---")
-
-    # --- 2. Recent Activity ---
     st.subheader("Recent Activity (DB)")
     try:
         trades_res = requests.get(f"{ST_BACKEND_URL}/trades")
@@ -629,7 +550,5 @@ with tab3:
     with tab3:
         @st.fragment(run_every=2)
         def render_strategy_agent():
-            # User requested to remove all UI elements from this view
             pass
-
         render_strategy_agent()
