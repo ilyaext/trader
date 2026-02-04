@@ -1,0 +1,29 @@
+# Git
+.git
+.gitignore
+
+# Docker
+docker-compose.yml
+.dockerignore
+
+# Python/Environment
+__pycache__
+*.py[cod]
+*$py.class
+.env
+.venv
+venv/
+env/
+htmlcov/
+.pytest_cache/
+.coverage
+
+# IDEs
+.vscode
+.idea
+*.swp
+*.swo
+
+# Project specific
+README.md
+task.md

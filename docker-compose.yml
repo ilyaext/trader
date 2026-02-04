@@ -1,0 +1,47 @@
+services:
+  # Trading Agent Backend (FastAPI)
+  backend:
+    build: ./backend
+    container_name: trader-backend
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - db
+    dns:
+      - 8.8.8.8 # Often needed for IBKR connection stability
+    # Mount code for hot reloading
+    volumes:
+      - ./backend:/app
+      - ./history:/app/history
+
+  # User Interface (Streamlit)
+  frontend:
+    build: ./frontend
+    container_name: trader-frontend
+    ports:
+      - "8501:8501"
+    env_file:
+      - .env
+    depends_on:
+      - backend
+    # Mount code for hot reloading
+    volumes:
+      - ./frontend:/app
+
+  # Database (PostgreSQL)
+  db:
+    image: postgres:15-alpine
+    container_name: trader-db
+    # ports:
+    # - "5433:5432" # Removed to avoid ALL port conflicts. Backend connects internally.
+    env_file:
+      - .env
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:
