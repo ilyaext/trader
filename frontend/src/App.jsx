@@ -83,9 +83,9 @@ const App = () => {
                 const msg = JSON.parse(event.data);
                 if (msg.type === 'price') {
                     setPrices(prev => ({ ...prev, [msg.ticker]: msg.price }));
-                } else if (msg.type === 'order_update') {
-                    // Trigger a re-fetch of orders when status changes
-                    axios.get(`${API_BASE}/orders`).then(res => setOrders(res.data));
+                } else if (msg.type === 'order_update' || msg.type === 'position_update') {
+                    // Trigger a full re-fetch to update orders, portfolio, and account
+                    fetchAll();
                 } else if (msg.type === 'log') {
                     setLogs(prev => [msg.data, ...prev].slice(0, 50));
                 }
@@ -97,9 +97,12 @@ const App = () => {
 
     // Complex Logic: Process Orders (Merging Parent/Child)
     const processedOrders = useMemo(() => {
-        if (!orders.length) return [];
-        const parents = orders.filter(o => !o.parent_id || o.parent_id === 0);
-        const children = orders.filter(o => o.parent_id && o.parent_id !== 0);
+        if (!orders || !Array.isArray(orders) || orders.length === 0) return [];
+
+        // Use map to create fresh objects to avoid state mutation
+        const allOrders = orders.map(o => ({ ...o }));
+        const parents = allOrders.filter(o => !o.parent_id || o.parent_id === 0);
+        const children = allOrders.filter(o => o.parent_id && o.parent_id !== 0);
 
         parents.forEach(p => {
             const child = children.find(c => c.parent_id === p.id);
@@ -184,9 +187,18 @@ const App = () => {
     };
 
     // UI Helpers
-    const fmtUSD = (v) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(v);
-    const fmtPct = (v) => (v >= 0 ? '+' : '') + v.toFixed(2) + '%';
+    const fmtUSD = (v) => {
+        if (v === undefined || v === null || isNaN(v)) return '$0.00';
+        return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(v);
+    };
+
+    const fmtPct = (v) => {
+        if (v === undefined || v === null || isNaN(v)) return '0.00%';
+        return (v >= 0 ? '+' : '') + v.toFixed(2) + '%';
+    };
+
     const getStatusColor = (status) => {
+        if (!status) return 'grey';
         const active = ['Submitted', 'PreSubmitted', 'PendingSubmit', 'ApiPending', 'Simulated'];
         if (active.includes(status)) return 'orange';
         if (status === 'Filled') return 'green';
@@ -222,17 +234,17 @@ const App = () => {
                     <div className="section-title">Account Summary</div>
                     <div className="account-metric">
                         <div className="metric-label">Net Liquidation</div>
-                        <div className="metric-value">{fmtUSD(account.net_liquidation)}</div>
+                        <div className="metric-value">{fmtUSD(account?.net_liquidation || 0)}</div>
                     </div>
                     <div className="account-metric">
                         <div className="metric-label">Free Cash</div>
-                        <div className="metric-value">{fmtUSD(account.total_cash)}</div>
+                        <div className="metric-value">{fmtUSD(account?.total_cash || 0)}</div>
                     </div>
                     <div className="account-metric">
                         <div className="metric-label">Daily P/L</div>
-                        <div className="metric-value mono ${account.daily_pnl >= 0 ? 'green' : 'red'}">{fmtUSD(account.daily_pnl)}</div>
-                        <div className={`metric-delta ${account.daily_pnl_pct >= 0 ? 'green' : 'red'}`}>
-                            {fmtPct(account.daily_pnl_pct)}
+                        <div className={`metric-value mono ${account?.daily_pnl >= 0 ? 'green' : 'red'}`}>{fmtUSD(account?.daily_pnl || 0)}</div>
+                        <div className={`metric-delta ${account?.daily_pnl_pct >= 0 ? 'green' : 'red'}`}>
+                            {fmtPct(account?.daily_pnl_pct || 0)}
                         </div>
                     </div>
                 </div>
@@ -287,7 +299,7 @@ const App = () => {
                                             </tr>
                                         </thead>
                                         <tbody>
-                                            {portfolio.length > 0 ? portfolio.map(p => (
+                                            {portfolio?.length > 0 ? portfolio.map(p => (
                                                 <tr key={p.ticker}>
                                                     <td className="ticker-cell">{p.ticker}</td>
                                                     <td className={p.today_pnl_pct >= 0 ? 'green' : 'red'}>{fmtPct(p.today_pnl_pct)}</td>
@@ -417,7 +429,7 @@ const App = () => {
                                             </tr>
                                         </thead>
                                         <tbody>
-                                            {processedOrders.map(o => {
+                                            {processedOrders?.map(o => {
                                                 const isFilled = o.status === 'Filled';
                                                 const slStatus = o.attached_stop_status || '';
                                                 const slActive = ['Submitted', 'PreSubmitted', 'PendingSubmit', 'ApiPending', 'Simulated'].includes(slStatus);

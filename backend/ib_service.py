@@ -30,42 +30,38 @@ class IBIntegration:
         self.ib = IB()
         self.host = os.getenv("IB_HOST", "127.0.0.1")
         self.port = int(os.getenv("IB_PORT", "7497"))
-        self.client_id = random.randint(2, 999) # Random ID to avoid conflicts
-        self.ib.runTimeout = 30 # Increase run timeout
-        self.ib.reqTimeout = 30 # Increase request timeout (default is 4s)
-        
-        # 1 = Live (Real-time, requires subscription)
-        # 2 = Frozen (Last price recorded at market close, requires subscription)
-        # 3 = Delayed (15-20 min delayed, free)
-        # 4 = Delayed Frozen (Last price recorded at market close, free)
-        # Default to 2 (Frozen) to match user preference for Static Close
         self.market_data_type = int(os.getenv("IB_MARKET_DATA_TYPE", "2"))
+        
+        self.ib.runTimeout = 30
+        self.ib.reqTimeout = 30
         
         # Event Callbacks
         self.price_callbacks = []
-        self.order_callbacks = [] # WebSocket or logic listeners
+        self.order_callbacks = [] 
+        self.position_callbacks = []
+        
         self.ib.pendingTickersEvent += self.on_pending_tickers
         self.ib.disconnectedEvent += self.on_disconnected
         self.ib.errorEvent += self.on_error
         self.ib.orderStatusEvent += self.on_order_status
-        self.client_id = random.randint(2, 999) 
+        self.ib.positionEvent += self.on_position_update
+        self.ib.updatePortfolioEvent += self.on_update_portfolio
+        
         self.last_heartbeat = datetime.now() 
 
     def on_error(self, reqId, errorCode, errorString, contract):
         """Handle IBKR API errors"""
-        # 1100=Connectivity lost, 10197=Competing Session, 2110=Connectivity broken
-        if errorCode in [1100, 10197, 2110]:
-            print(f"🚨 CRITICAL IBKR ERROR {errorCode}: {errorString}")
-            # Force connection check to fail by invalidating heartbeat
-            self.last_heartbeat = datetime(2000, 1, 1)
+        # Diagnostic print for ALL errors
+        print(f"DEBUG: [on_error] reqId={reqId}, code={errorCode}, msg={errorString}", flush=True)
 
-            # Manually disconnect to trigger clean reconnection loop
-            asyncio.create_task(self.force_disconnect()) 
-        self.last_heartbeat = datetime.now() # Initialize to now so startup doesn't fail immediately 
+        # 1100=Connectivity lost, 10197=Competing Session, 2110=Connectivity broken, 504=Not connected
+        if errorCode in [1100, 10197, 2110, 504]:
+            print(f"🚨 [on_error] CRITICAL ERROR {errorCode}. Force disconnecting.", flush=True)
+            # Ensure we are considered disconnected
+            asyncio.create_task(self.force_disconnect())
 
     def on_order_status(self, trade):
         """Callback for real-time order updates from IBKR"""
-        print(f"🔔 IBKR NOTIFICATION: Order {trade.order.orderId} Status: {trade.orderStatus.status} | Filled: {trade.orderStatus.filled}")
         # Notify subscribers (WebSockets)
         for cb in self.order_callbacks:
             asyncio.create_task(cb(trade))
@@ -83,10 +79,15 @@ class IBIntegration:
 
     async def connect(self):
         if self.ib.isConnected():
-            return
+            # Check if it's actually alive
+            if (datetime.now() - getattr(self, 'last_heartbeat', datetime(2000,1,1))).total_seconds() < 15:
+                return
 
         logger.info("Starting connection sequence...")
         await self.force_disconnect()
+        
+        # Wait a bit to ensure TWS cleans up previous session
+        await asyncio.sleep(2)
 
         # Generate a fresh Client ID for every connection attempt
         self.client_id = random.randint(2, 999)
@@ -94,8 +95,9 @@ class IBIntegration:
         
         try:
             # Connect
-            await self.ib.connectAsync(self.host, self.port, clientId=self.client_id)
+            await asyncio.wait_for(self.ib.connectAsync(self.host, self.port, clientId=self.client_id), timeout=10.0)
             
+            self.last_heartbeat = datetime.now() # Reset heartbeat on success
             logger.info("✅ Connected to IBKR")
             
             # Request All Open Orders (Fixes visibility of TWS orders)
@@ -116,6 +118,14 @@ class IBIntegration:
                 # Log but DO NOT fail the connection
                 logger.warning(f"Could not request executions (TWS busy?): {e}")
 
+            # Explicitly request positions and account updates to ensure they stream
+            try:
+                self.ib.reqPositions()
+                self.ib.reqAccountUpdates(True)
+                logger.info("Requested explicit position and account updates")
+            except Exception as e:
+                logger.warning(f"Could not request positions/account updates: {e}")
+
         except Exception as e:
             import traceback
             logger.error(f"❌ Connection failed: {e}")
@@ -124,35 +134,27 @@ class IBIntegration:
                 
     @property
     def check_connection(self):
-        # Strict verification: Socket connected AND Heartbeat recent (< 15s)
-        is_socket_connected = self.ib.isConnected()
-        
-        # If never validated, rely on socket (initial startup)
-        if not hasattr(self, 'last_heartbeat'):
-             return is_socket_connected
-
-        # If validated recently, return True
-        time_since_heartbeat = (datetime.now() - self.last_heartbeat).total_seconds()
-        return is_socket_connected and time_since_heartbeat < 15
+        """Returns simplified connection status for UI/Health"""
+        return self.ib.isConnected()
 
     async def validate_connection(self):
-        """Actively checks connection health by requesting current time"""
+        """Actively checks connection health by requesting a lightweight tag"""
         if not self.ib.isConnected():
             return False
             
         try:
-            # 2 second timeout for heartbeat
+            # 2 second timeout for a simple network-roundtrip request
+            # We use reqCurrentTimeAsync as it's the lightest possible request
             await asyncio.wait_for(self.ib.reqCurrentTimeAsync(), timeout=2.0)
-            self.last_heartbeat = datetime.now() # Update timestamp
             return True
         except Exception as e:
-            logger.warning(f"Heartbeat failed: {e}")
+            logger.warning(f"Heartbeat validation failed: {e}")
             return False
 
     async def sync_open_orders(self):
         """Asynchronously pull all open orders (including TWS ones)"""
         if self.ib.isConnected():
-             print("🔄 Syncing Open Orders with IBKR...")
+             print("🔄 Syncing Open Orders with IBKR...", flush=True)
              try:
                  # Use Async variant to prevent 'loop already running' errors
                  await self.ib.reqAllOpenOrdersAsync()
@@ -161,6 +163,20 @@ class IBIntegration:
 
     def register_order_callback(self, cb):
         self.order_callbacks.append(cb)
+
+    def register_position_callback(self, cb):
+        self.position_callbacks.append(cb)
+
+    def on_position_update(self, pos):
+        """Event handler for real-time position updates from IBKR"""
+        for cb in self.position_callbacks:
+            asyncio.create_task(cb(pos.account, pos.contract, pos.position, pos.avgCost))
+
+    def on_update_portfolio(self, item):
+        """Event handler for portfolio updates (alternative to positionEvent)"""
+        # Map item to position update format
+        for cb in self.position_callbacks:
+            asyncio.create_task(cb(item.account, item.contract, item.position, item.averageCost))
 
     async def robust_qualify_contract(self, ticker_symbol):
         """Attempts to qualify a stock contract with multiple fallback strategies"""
@@ -186,7 +202,6 @@ class IBIntegration:
         except: pass
         
         # 4. Search via ContractDetails (Exhaustive)
-        print(f"DEBUG: robust_qualify_contract failed basic qualification for {ticker_symbol}. Searching details...")
         try:
             proto = Stock(ticker_symbol, '', 'USD')
             details = await self.ib.reqContractDetailsAsync(proto)
@@ -438,6 +453,26 @@ class IBIntegration:
                 
         return 0.0
 
+    async def close_position(self, ticker_symbol):
+        """Closes an entire position at Market price"""
+        if not self.check_connection:
+            raise Exception("IBKR not connected")
+            
+        positions = self.ib.positions()
+        target_pos = next((p for p in positions if p.contract.symbol == ticker_symbol), None)
+        
+        if not target_pos or target_pos.position == 0:
+            raise ValueError(f"No active position for {ticker_symbol}")
+            
+        action = "SELL" if target_pos.position > 0 else "BUY"
+        quantity = abs(target_pos.position)
+        
+        print(f"🔄 CLOSING POSITION: {ticker_symbol} ({quantity} shares)", flush=True)
+        contract = target_pos.contract
+        order = MarketOrder(action, quantity)
+        trade = self.ib.placeOrder(contract, order)
+        return trade
+
 
     def register_callback(self, callback):
         self.price_callbacks.append(callback)
@@ -575,14 +610,6 @@ class IBIntegration:
             if current_price > 0 and item.averageCost > 0:
                  unrealized_pnl = (current_price - item.averageCost) * item.position
             
-            # DEBUG DATA DISCREPANCY
-            t_last = ticker.last if ticker else 'N/A'
-            t_close = ticker.close if ticker else 'N/A' 
-            t_bid = ticker.bid if ticker else 'N/A'
-            t_ask = ticker.ask if ticker else 'N/A'
-            t_mp = ticker.marketPrice() if ticker else 'N/A'
-            print(f"DEBUG PRICE: {item.contract.symbol} | Used={current_price} | CalcMP={t_mp} | Last={t_last} | Close={t_close} | Bid={t_bid} | Ask={t_ask}")
-
             portfolio_items.append({
                 "ticker": item.contract.symbol,
                 "quantity": item.position,
@@ -621,7 +648,6 @@ class IBIntegration:
                         return t
                 
                 # 2. If not found, subscribe (Auto-Recovery for manual/TWS orders)
-                print(f"DEBUG: Auto-subscribing to {symbol} found in Orders")
                 c = Stock(symbol, 'SMART', 'USD')
                 self.ib.reqMktData(c, '', False, False)
                 return None # Will be available next tick
@@ -668,7 +694,12 @@ class IBIntegration:
     async def get_account_summary(self):
         """Returns account summary metrics (Asynchronous)"""
         if not self.check_connection:
-            return None
+            return {
+                "net_liquidation": 0.0,
+                "total_cash": 0.0,
+                "daily_pnl": 0.0,
+                "daily_pnl_pct": 0.0
+            }
             
         # 1. Fetch Account Tags (NetLiquidation, TotalCashValue)
         # We use accountValues because it's simpler for default account
@@ -709,10 +740,3 @@ class IBIntegration:
             logger.error(f"Error calculating daily P&L sum: {e}")
             
         return summary
-
-_service_instance = None
-def get_ib_service():
-    global _service_instance
-    if _service_instance is None:
-        _service_instance = IBIntegration()
-    return _service_instance

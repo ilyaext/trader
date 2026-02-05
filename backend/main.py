@@ -44,7 +44,8 @@ class ConnectionManager:
         for connection in self.active_connections:
             try:
                 await connection.send_text(json.dumps(message))
-            except:
+            except Exception as e:
+                print(f"⚠️ [WS ERROR] Failed to send: {e}", flush=True)
                 pass
 
 manager = ConnectionManager()
@@ -82,6 +83,7 @@ async def on_price_update(ticker):
     symbol = ticker.contract.symbol
     price = ticker.marketPrice() or ticker.last or ticker.close
     if price and price > 0:
+        # Avoid spamming logs for price updates unless debugging core flow
         asyncio.create_task(manager.broadcast({
             "type": "price",
             "ticker": symbol,
@@ -97,6 +99,16 @@ async def on_order_update(trade):
         "status": trade.orderStatus.status
     }))
 
+async def on_position_update(account, contract, position, avgCost):
+    """Callback for real-time position changes"""
+    asyncio.create_task(manager.broadcast({
+        "type": "position_update",
+        "account": account,
+        "ticker": contract.symbol,
+        "position": position,
+        "avg_cost": avgCost
+    }))
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Setup
@@ -106,8 +118,10 @@ async def lifespan(app: FastAPI):
     # Register Callbacks
     ib_service.price_callbacks = [] # Clear old ones if re-running
     ib_service.order_callbacks = []
+    ib_service.position_callbacks = []
     ib_service.register_callback(on_price_update)
     ib_service.register_order_callback(on_order_update)
+    ib_service.register_position_callback(on_position_update)
     
     # Launch background connection and sync loop
     task = asyncio.create_task(check_connection_loop())
@@ -121,32 +135,39 @@ app = FastAPI(title="Trader Bot API", lifespan=lifespan)
 async def check_connection_loop():
     """Background task to maintain IBKR connection and sync order state"""
     sync_counter = 0
+    print("🚀 [SENTINEL] Background loop started", flush=True)
     while True:
         try:
             # 1. Check Connectivity
             is_valid = await ib_service.validate_connection()
             
             if not is_valid:
-                print("⚠️ [SENTINEL] IBKR Disconnected. Attempting Reconnect...")
+                print("⚠️ [SENTINEL] Connection check failed. Attempting Reconnect...", flush=True)
                 await ib_service.force_disconnect()
                 await ib_service.connect()
-                # Restore market data for active monitor list
-                async with strategy_lock:
-                    for s in strategies:
-                        if s.status == "active":
-                            await ib_service.subscribe_market_data(s.ticker)
+                
+                if ib_service.ib.isConnected():
+                    print("✅ [SENTINEL] Reconnected successfully", flush=True)
+                    # Restore market data for active monitor list
+                    async with strategy_lock:
+                        for s in strategies:
+                            if s.status == "active":
+                                await ib_service.subscribe_market_data(s.ticker)
+                else:
+                    print("❌ [SENTINEL] Reconnection attempt failed", flush=True)
             else:
                 # 2. Periodic State Sync (Every 30s)
                 sync_counter += 1
                 if sync_counter >= 6:
-                    print("🔄 [SENTINEL] Syncing Order History with TWS...")
-                    # Reset counter BEFORE call to ensure we don't spam if it fails
+                    print("🔄 [SENTINEL] Syncing state (Positions/Orders)", flush=True)
                     sync_counter = 0 
                     await ib_service.sync_open_orders()
+                    ib_service.ib.reqPositions()
                         
         except Exception as e:
-            print(f"📡 [SENTINEL ERROR] Connection Loop clash: {e}")
-            # Ensure we reset counter on error to avoid immediate retry spike
+            import traceback
+            print(f"📡 [SENTINEL ERROR] Loop clash: {e}", flush=True)
+            print(traceback.format_exc(), flush=True)
             sync_counter = 0 
         
         await asyncio.sleep(5)
