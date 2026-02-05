@@ -458,10 +458,19 @@ class IBIntegration:
         return 0.0
 
     async def close_position(self, ticker_symbol):
-        """Closes an entire position at Market price"""
+        """Closes an entire position at Market price and cleans up open orders"""
         if not self.check_connection:
             raise Exception("IBKR not connected")
             
+        # 1. Cancel all open orders for this ticker (Cleanup)
+        for trade in self.ib.openTrades():
+            if trade.contract.symbol == ticker_symbol:
+                print(f"🧹 [Cleanup] Cancelling open order for {ticker_symbol}: {trade.order.orderType} {trade.order.action}", flush=True)
+                self.ib.cancelOrder(trade.order)
+                # Small sleep to allow TWS to process the cancellation
+                await asyncio.sleep(0.5)
+
+        # 2. Find the position to close
         positions = self.ib.positions()
         target_pos = next((p for p in positions if p.contract.symbol == ticker_symbol), None)
         
