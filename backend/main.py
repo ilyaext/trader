@@ -1,35 +1,33 @@
+import nest_asyncio
+import asyncio
 from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 from contextlib import asynccontextmanager
 from database import init_db, get_db, Trade
 from sqlalchemy.orm import Session
 from ib_service import get_ib_service as live_get_ib_service
-import asyncio
 import os
 import uuid
 import json
 import random
+import logging
 from datetime import datetime
 from models import Strategy, StrategyRequest, StrategyUpdate
-
-# CONFIGURATION
-# CONFIGURATION
-# TRADING_MODE = os.getenv("TRADING_MODE", "live")
-# print(f"🚀 STARTING IN LIVE MODE")
-
-# ib_service = live_ib_service
-ib_service = live_get_ib_service()
-
-# In-memory storage for strategies (for now)
-strategies = []
-strategy_lock = None # Will be initialized in lifespan
-simulated_orders = [] # Mock orders for TEST ticker
-test_state = {"price": 100.0} # Virtual price for TEST
-
 from collections import deque
-strategy_logs = deque(maxlen=50) # Keep last 50 logs
 
-# WebSocket Connection Manager
+# Apply nest_asyncio globally at the absolute start
+nest_asyncio.apply()
+
+# CONFIGURATION
+BACKEND_URL = os.getenv("BACKEND_URL", "http://backend:8000")
+TARGET_INVESTMENT = float(os.getenv("TARGET_INVESTMENT", "3000.0"))
+
+# Global context
+strategies = []
+strategy_lock = asyncio.Lock()
+strategy_logs = deque(maxlen=50) # Maintain last 50 entries
+
+# WebSocket Manager
 class ConnectionManager:
     def __init__(self):
         self.active_connections: list[WebSocket] = []
@@ -39,7 +37,8 @@ class ConnectionManager:
         self.active_connections.append(websocket)
 
     def disconnect(self, websocket: WebSocket):
-        self.active_connections.remove(websocket)
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
 
     async def broadcast(self, message: dict):
         for connection in self.active_connections:
@@ -49,6 +48,7 @@ class ConnectionManager:
                 pass
 
 manager = ConnectionManager()
+ib_service = live_get_ib_service()
 
 def log_strategy_event(msg: str):
     """Log an event to the global buffer and broadcast via WS"""
@@ -58,103 +58,39 @@ def log_strategy_event(msg: str):
     print(f"STRATEGY LOG: {msg}")
     asyncio.create_task(manager.broadcast({"type": "log", "data": formatted}))
 
-
-
-async def check_strategies(ticker: str, price: float):
-    """Core logic to check and trigger strategies based on price"""
-    if strategy_lock is None or price <= 0:
-        return
-
+async def check_strategies(symbol, price):
     async with strategy_lock:
-        active_strategies = [s for s in strategies if s.ticker == ticker and s.status == "active"]
-        if not active_strategies: return
-
-        for strategy in active_strategies:
-            if strategy.is_live:
-                strategy.current_price = price
-                strategy.last_updated = datetime.now().strftime("%H:%M:%S")
-
-                if price > strategy.entry_price:
-                    if ticker == "TEST":
-                        # SIMULATION TRIGGER
-                        log_strategy_event(f"🧪 TEST TRIGGER: Price {price} > Entry {strategy.entry_price}")
-                        mock_order = {
-                            "id": -random.randint(1000, 99999), 
-                            "time": datetime.now().strftime("%H:%M:%S"),
-                            "ticker": "TEST",
-                            "action": "BUY",
-                            "total_qty": strategy.quantity,
-                            "filled_qty": strategy.quantity,
-                            "price": strategy.entry_price, 
-                            "stop_price": strategy.stop_loss,
-                            "avg_fill_price": price,
-                            "current_or_filled_price": price,
-                            "status": "Simulated",
-                            "type": "LIMIT"
-                        }
-                        simulated_orders.append(mock_order)
-                        strategy.status = "executed"
-                        strategy.is_live = False
-                    else:
-                        # REAL TRIGGER
-                        log_strategy_event(f"🚀 TRIGGER: {strategy.ticker} Price {price:.2f} > Entry {strategy.entry_price:.2f}. Placing Order!")
-                        try:
-                            asyncio.create_task(ib_service.place_order(
-                                strategy.ticker, "BUY", strategy.quantity, 
-                                order_type="LIMIT", limit_price=strategy.entry_price, stop_loss_price=strategy.stop_loss
-                            ))
-                            strategy.status = "executed"
-                            strategy.is_live = False
-                            log_strategy_event(f"✅ Strategy {strategy.ticker} EXECUTED.")
-                        except Exception as e:
-                           log_strategy_event(f"❌ Failed to execute strategy {strategy.ticker}: {e}")
+        for s in strategies:
+            if s.ticker == symbol and s.status == "active":
+                if price >= s.entry_price:
+                    log_strategy_event(f"🚀 BREAKOUT: {symbol} at ${price:.2f} (Target: {s.entry_price})")
+                    s.status = "triggered"
+                    try:
+                        await ib_service.place_order(
+                            ticker_symbol=symbol,
+                            action="BUY",
+                            quantity=s.quantity,
+                            stop_loss_price=s.stop_loss
+                        )
+                        log_strategy_event(f"✅ Order Placed for {symbol} ({s.quantity} shares)")
+                    except Exception as e:
+                        log_strategy_event(f"❌ Order Failed for {symbol}: {e}")
+                s.current_price = price
 
 async def on_price_update(ticker):
-    """Callback triggered by ib_service when price updates"""
+    """Callback for real-time price updates"""
     symbol = ticker.contract.symbol
-    if symbol == "TEST": return # Should not happen from IBKR, but safety check for on_price_update callback loop if mixed
-
-    # Get current price
-    price = 0.0
-    # Helper to safely get float
-    def safe_float(val):
-        try:
-            f = float(val)
-            return f if f == f else 0.0 # Check for NaN
-        except:
-            return 0.0
-
-    if ticker.last and safe_float(ticker.last) > 0:
-            price = safe_float(ticker.last)
-    elif ticker.marketPrice():
-            mp = safe_float(ticker.marketPrice())
-            if mp > 0:
-                price = mp
-    
-    # Fallback to Close if live price is missing
-    if price <= 0 and ticker.close:
-            cp = safe_float(ticker.close)
-            if cp > 0:
-                price = cp
-
-    if price <= 0:
-        return
-
-    # Broadcast Price Update
-    asyncio.create_task(manager.broadcast({
-        "type": "price",
-        "ticker": symbol,
-        "price": price
-    }))
-
-    # Pass to strategy checker
-    await check_strategies(symbol, price)
+    price = ticker.marketPrice() or ticker.last or ticker.close
+    if price and price > 0:
+        asyncio.create_task(manager.broadcast({
+            "type": "price",
+            "ticker": symbol,
+            "price": price
+        }))
+        await check_strategies(symbol, price)
 
 async def on_order_update(trade):
     """Callback for real-time order status changes"""
-    # Simply broadcast the refresh signal or the full data
-    # For simplicity, we signal a refresh of the entire order list
-    # or we can send the partial update. React works well with a "refresh" signal.
     asyncio.create_task(manager.broadcast({
         "type": "order_update",
         "order_id": trade.order.orderId,
@@ -163,466 +99,59 @@ async def on_order_update(trade):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup
-    global strategy_lock
-    strategy_lock = asyncio.Lock()
-    
+    # Setup
+    print("🚀 [BACKEND] Starting Lifespan...")
     init_db()
     
     # Register Callbacks
+    ib_service.price_callbacks = [] # Clear old ones if re-running
+    ib_service.order_callbacks = []
     ib_service.register_callback(on_price_update)
     ib_service.register_order_callback(on_order_update)
     
-    # Start background connection loop
+    # Launch background connection and sync loop
     task = asyncio.create_task(check_connection_loop())
-    
     yield
-    
-    # Shutdown
+    # Cleanup
     task.cancel()
-    if ib_service.ib.isConnected():
-        ib_service.ib.disconnect()
+    await ib_service.force_disconnect()
+
+app = FastAPI(title="Trader Bot API", lifespan=lifespan)
 
 async def check_connection_loop():
+    """Background task to maintain IBKR connection and sync order state"""
+    sync_counter = 0
     while True:
         try:
-            # Use active validation instead of passive check
+            # 1. Check Connectivity
             is_valid = await ib_service.validate_connection()
             
             if not is_valid:
-                print("⚠️ Heartbeat failed or Disconnected. Resetting connection...")
+                print("⚠️ [SENTINEL] IBKR Disconnected. Attempting Reconnect...")
                 await ib_service.force_disconnect()
                 await ib_service.connect()
-                
-                # Re-subscribe to active strategies
+                # Restore market data for active monitor list
                 async with strategy_lock:
                     for s in strategies:
                         if s.status == "active":
                             await ib_service.subscribe_market_data(s.ticker)
             else:
-                # PERIODIC SYNC: Force pull latest orders to catch manual TWS actions
-                # Every 3 loops (~15 seconds)
-                if int(datetime.now().timestamp()) % 15 < 5:
-                    ib_service.sync_open_orders()
+                # 2. Periodic State Sync (Every 30s)
+                sync_counter += 1
+                if sync_counter >= 6:
+                    print("🔄 [SENTINEL] Syncing Order History with TWS...")
+                    # Reset counter BEFORE call to ensure we don't spam if it fails
+                    sync_counter = 0 
+                    await ib_service.sync_open_orders()
                         
         except Exception as e:
-            print(f"Error in connection loop: {e}")
-            
-        await asyncio.sleep(5) # Check every 5 seconds
-
-app = FastAPI(title="Trader Bot API", lifespan=lifespan)
-
-# --- Strategy Endpoints ---
-
-@app.post("/strategies")
-async def create_strategy(req: StrategyRequest):
-    # Sanitize ticker
-    # Sanitize ticker
-    # Sanitize ticker
-    clean_ticker = req.ticker.strip().upper()
-    
-    async with strategy_lock:
-        # Check for duplicates
-        for s in strategies:
-            if s.ticker == clean_ticker and s.status == "active":
-                raise HTTPException(status_code=400, detail=f"Active strategy already exists for {clean_ticker}")
-
-    # Check for Existing Position
-    portfolio = ib_service.get_portfolio()
-    if any(p.get('ticker') == clean_ticker for p in portfolio):
-         raise HTTPException(status_code=400, detail=f"Position already exists for {clean_ticker}")
-
-    # Check for Active Orders (Live)
-    active_orders = ib_service.get_today_orders()
-    # Filter for active statuses just in case, though get_today_orders returns all today's orders
-    # We should filter for strictly active ones here.
-    # Assuming it returns a list of strict active/open orders or we filter.
-    # Safe to reject if ANY active-like order exists.
-    live_active = ['Submitted', 'PreSubmitted', 'PendingSubmit', 'ApiPending']
-    if any(o.get('ticker') == clean_ticker and o.get('status') in live_active for o in active_orders):
-          raise HTTPException(status_code=400, detail=f"Active order already exists for {clean_ticker}")
-    
-    # Check for Active Orders (Simulated)
-    if any(o.get('ticker') == clean_ticker for o in simulated_orders):
-           raise HTTPException(status_code=400, detail=f"Simulated order already exists for {clean_ticker}")
-    
-
-    id = str(uuid.uuid4())
-    strategy = Strategy(
-        id=id,
-        ticker=clean_ticker,
-        entry_price=req.entry_price,
-        stop_loss=req.stop_loss,
-        quantity=req.quantity,
-        created_at=datetime.now().isoformat()
-    )
-    
-    async with strategy_lock:
-        strategies.append(strategy)
-    
-    
-    # Subscribe to market data (Skip for TEST)
-    if clean_ticker == "TEST":
-        # Initialize with current test price
-        strategy.current_price = test_state["price"]
-    else:
-        try:
-            await ib_service.subscribe_market_data(clean_ticker)
-            # Try to fetch initial price immediately
-            initial_price = await ib_service.get_price(clean_ticker)
-            if initial_price and initial_price > 0:
-                strategy.current_price = initial_price
-                # Check strategy immediately in case it's already triggered
-                asyncio.create_task(check_strategies(clean_ticker, initial_price))
-        except Exception as e:
-            # Rollback: Remove strategy if subscription failed
-            async with strategy_lock:
-                strategies.remove(strategy)
-            print(f"❌ Strategy creation failed: {e}")
-            raise HTTPException(status_code=400, detail=str(e))
-    
-    return strategy
-
-@app.patch("/strategies/{strategy_id}")
-async def update_strategy(strategy_id: str, update: StrategyUpdate):
-    async with strategy_lock:
-        for s in strategies:
-            if s.id == strategy_id:
-                if update.is_live is not None:
-                    s.is_live = update.is_live
-                    # If switching to live, re-subscribe? 
-                    # Assuming subscription is persistent or handled, or checking connection loop will handle it.
-                    # Current impl subscribes on creation. If we never unsubscribed, we are good.
-                    # If we unsubscribed? We don't have unsub logic except on delete.
-                
-                if update.current_price is not None:
-                    # Allow manual price update for any ticker (still supported in Monitored table)
-                    s.current_price = update.current_price
-                    s.last_updated = datetime.now().strftime("%H:%M:%S")
-                    
-                    # If this is TEST ticker, maybe trigger check?
-                    if s.ticker == "TEST":
-                        # This path is usually from UI Manual Update form.
-                        # We also have /test/price separately.
-                        # Let's support both.
-                        asyncio.create_task(check_strategies("TEST", update.current_price))
-                
-                return s
-    
-    raise HTTPException(status_code=404, detail="Strategy not found")
-    
-    return strategy
-
-@app.patch("/strategies/{strategy_id}")
-async def update_strategy(strategy_id: str, update: StrategyUpdate):
-    async with strategy_lock:
-        for s in strategies:
-            if s.id == strategy_id:
-                if update.is_live is not None:
-                    s.is_live = update.is_live
-                    
-                if update.current_price is not None:
-                    s.current_price = update.current_price
-                    s.last_updated = datetime.now().strftime("%H:%M:%S")
-                
-                return s
-    
-    raise HTTPException(status_code=404, detail="Strategy not found")
-
-@app.get("/strategies")
-async def list_strategies():
-    # Sync TEST strategies with current test price
-    for s in strategies:
-        if s.ticker == "TEST":
-            s.current_price = test_state["price"]
-    return strategies
-
-@app.delete("/strategies/{strategy_id}")
-async def delete_strategy(strategy_id: str):
-    async with strategy_lock:
-        for i, s in enumerate(strategies):
-            if s.id == strategy_id:
-                # Unsubscribe if it was active
-                if s.status == "active":
-                    ib_service.cancel_market_data(s.ticker)
-                
-                del strategies[i]
-                return {"status": "deleted", "id": strategy_id}
-    
-    raise HTTPException(status_code=404, detail="Strategy not found")
-
-@app.post("/positions/close")
-async def close_position(ticker: str):
-    if not ib_service.check_connection:
-        raise HTTPException(status_code=503, detail="IBKR Disconnected")
-
-    try:
-        # Get current position size
-        pos = await ib_service.get_current_position(ticker)
-        if pos == 0:
-             return {"status": "no_position", "message": "No position to close"}
+            print(f"📡 [SENTINEL ERROR] Connection Loop clash: {e}")
+            # Ensure we reset counter on error to avoid immediate retry spike
+            sync_counter = 0 
         
-        # Determine action
-        action = "SELL" if pos > 0 else "BUY"
-        quantity = abs(pos)
-        
-        # Place Market Order to close
-        trade = await ib_service.place_order(ticker, action, quantity)
-        
-        # Update any local strategy status if needed? 
-        # For now, just return success
-        return {
-            "status": "submitted", 
-            "ib_id": trade.order.orderId, 
-            "description": f"Closing position: {action} {quantity} {ticker}"
-        }
-    except Exception as e:
-         raise HTTPException(status_code=500, detail=str(e))
+        await asyncio.sleep(5)
 
-@app.get("/positions")
-async def list_positions():
-    if not ib_service.check_connection:
-        return []
-        
-    positions_data = []
-    ib_positions = ib_service.ib.positions()
-    
-    for p in ib_positions:
-        if p.position != 0:
-            ticker = p.contract.symbol
-            qty = p.position
-            avg_cost = p.avgCost
-            
-            # Fetch current market price for P&L
-            # In Simulation Mode, use get_portfolio_price() for End-of-Day view
-            # Fetch current market price for P&L
-            current_price = await ib_service.get_price(ticker)
-            
-            # Calculate P&L
-            # Calculate P&L
-            # Unrealized P&L = (Current Price - Avg Cost) * Quantity
-            pnl = (current_price - avg_cost) * qty
-            
-            # P&L %
-            # (Current Price - Avg Cost) / Avg Cost
-            pnl_pct = 0.0
-            if avg_cost > 0:
-                pnl_pct = (current_price - avg_cost) / avg_cost * 100
-            
-            # Timestamp 
-            purchased_at = None
-            # TODO: Fetch real execution time if needed
-            
-            positions_data.append({
-                "ticker": ticker,
-                "quantity": qty,
-                "avg_cost": avg_cost,
-                "current_price": current_price,
-                "pnl": pnl,
-                "pnl_percent": pnl_pct,
-                "purchased_at": purchased_at
-            })
-            
-    return positions_data 
-
-@app.get("/logs")
-async def get_logs():
-    """Return recent strategy logs"""
-    return list(strategy_logs)
-
-@app.get("/portfolio")
-async def get_portfolio():
-    if not ib_service.check_connection:
-        return []
-        
-    portfolio = ib_service.get_portfolio()
-    
-    # Helper to safely get float
-    def safe_float(val):
-        try:
-            f = float(val)
-            return f if f == f else 0.0 # Check for NaN
-        except:
-            return 0.0
-
-    # Enrich with calculated fields
-    for item in portfolio:
-        avg_cost = safe_float(item['avg_cost'])
-        market_price = safe_float(item['market_price'])
-        quantity = safe_float(item['quantity'])
-        stop_loss = safe_float(item.get('stop_loss', 0.0))
-        
-        # Ensure item has safe values for JSON
-        item['avg_cost'] = avg_cost
-        item['market_price'] = market_price
-        item['unrealized_pnl'] = safe_float(item['unrealized_pnl'])
-        item['realized_pnl'] = safe_float(item['realized_pnl'])
-        item['today_pnl'] = safe_float(item.get('today_pnl', 0.0))
-        item['today_pnl_pct'] = safe_float(item.get('today_pnl_pct', 0.0))
-        item['stop_loss'] = stop_loss
-        
-        # New Metrics: Distance and Risk
-        item['distance_to_stop'] = 0.0
-        item['risk_amount'] = 0.0
-        
-        if stop_loss > 0 and quantity != 0:
-             # Distance: Current - Stop (assuming Long, so positive distance usually)
-             item['distance_to_stop'] = market_price - stop_loss
-             
-             # Risk: (Stop - AvgPrice) * Qty
-             item['risk_amount'] = (stop_loss - avg_cost) * quantity
-        
-        
-        pnl_pct = 0.0
-        if avg_cost > 0:
-            pnl_pct = (market_price - avg_cost) / avg_cost * 100
-            
-        item['pnl_percent'] = pnl_pct
-        
-        # Format Fill Date
-        lfd = item.get('last_fill_date')
-        if lfd:
-             # Check if it's already a string or datetime
-             if hasattr(lfd, 'strftime'):
-                 item['last_fill_date'] = lfd.strftime("%Y-%m-%d %H:%M:%S")
-             else:
-                 item['last_fill_date'] = str(lfd)
-        else:
-             item['last_fill_date'] = "-"
-        
-    return portfolio 
-
-
-class OrderRequest(BaseModel):
-    ticker: str
-    action: str = "BUY"
-    quantity: int = 1
-    stop_loss: float = None # Optional attached stop loss
-
-
-@app.get("/quote/{ticker}")
-async def get_quote(ticker: str):
-    if not ib_service.check_connection:
-        return {"ticker": ticker, "price": 0.0, "status": "disconnected"}
-    
-    try:
-        price = await ib_service.get_price(ticker)
-        
-        if price is None:
-             return {"ticker": ticker, "price": 0.0, "status": "not_found", "error": "Invalid Ticker"}
-
-        # Handle NaN values explicitly using 0.0 or valid float
-        if price != price: # Check for NaN
-            price = 0.0 
-        return {"ticker": ticker, "price": price, "status": "connected"}
-    except Exception as e:
-        # Return error as JSON instead of crashing
-        print(f"Error fetching quote for {ticker}: {e}")
-        return {"ticker": ticker, "price": 0.0, "status": "error", "error": str(e)}
-
-@app.post("/order")
-async def place_order(order: OrderRequest, db: Session = Depends(get_db)):
-    if not ib_service.check_connection:
-        raise HTTPException(status_code=503, detail="IBKR Disconnected")
-    
-    try:
-        # Place order on IBKR
-        ib_trade = await ib_service.place_order(
-            order.ticker, 
-            order.action, 
-            order.quantity,
-            stop_loss_price=order.stop_loss
-        )
-        
-        # Record to DB (Optimistic recording for Hello World)
-        db_trade = Trade(
-            ticker=order.ticker, 
-            action=order.action, 
-            quantity=order.quantity, 
-            price=0.0, # Filled price unknown yet
-            ib_order_id=ib_trade.order.orderId
-        )
-        db.add(db_trade)
-        db.commit()
-        db.refresh(db_trade)
-        
-        return {"status": "submitted", "order_id": db_trade.id, "ib_id": ib_trade.order.orderId}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-class SimulationRequest(BaseModel):
-     ticker: str = "TEST"
-     price: float
-
-@app.post("/test/price")
-async def set_test_price(req: SimulationRequest): # Reuse class or make new
-    test_state["price"] = req.price
-    await check_strategies("TEST", req.price)
-    return {"status": "ok", "price": req.price}
-
-@app.post("/orders/{order_id}/cancel")
-async def cancel_order(order_id: str):
-    # Check for Simulated Order (Negative ID)
-    try:
-        oid = int(order_id)
-        if oid < 0:
-            # Remove from local list
-            global simulated_orders
-            simulated_orders = [o for o in simulated_orders if o['id'] != oid]
-            return {"status": "cancelled", "order_id": order_id, "mode": "simulated"}
-    except:
-        pass
-    if not ib_service.check_connection:
-        raise HTTPException(status_code=503, detail="IBKR Disconnected")
-    
-    try:
-        ib_service.cancel_order(order_id)
-        return {"status": "cancelled", "order_id": order_id}
-    except ValueError as ve:
-         raise HTTPException(status_code=404, detail=str(ve))
-    except Exception as e:
-         raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/trades")
-async def get_trades(db: Session = Depends(get_db)):
-    trades = db.query(Trade).order_by(Trade.timestamp.desc()).limit(10).all()
-    return trades
-
-@app.get("/orders")
-async def get_orders():
-    """Returns all IBr orders for the current session"""
-    real = []
-    if ib_service.check_connection:
-       real = ib_service.get_today_orders()
-    return simulated_orders + real
-
-class HistoryRequest(BaseModel):
-    ticker: str
-    start_date: str
-    end_date: str
-    bar_size: str = "1 day"
-
-@app.post("/history/download")
-async def download_history(req: HistoryRequest):
-    if not ib_service.check_connection:
-        raise HTTPException(status_code=503, detail="IBKR Disconnected")
-    
-    try:
-        filename = await ib_service.download_historical_data(req.ticker, req.start_date, req.end_date, req.bar_size)
-        return {"status": "ok", "file": filename}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/account")
-async def get_account_summary():
-    if not ib_service.check_connection:
-        return {"net_liquidation": 0.0, "total_cash": 0.0, "daily_pnl": 0.0, "daily_pnl_pct": 0.0, "status": "disconnected"}
-    
-    summary = ib_service.get_account_summary()
-    if summary:
-        return summary
-    return {"net_liquidation": 0.0, "total_cash": 0.0, "daily_pnl": 0.0, "daily_pnl_pct": 0.0, "status": "unavailable"}
-    return {"net_liquidation": 0.0, "total_cash": 0.0, "daily_pnl": 0.0, "daily_pnl_pct": 0.0, "status": "unavailable"}
+# --- Endpoints ---
 
 @app.get("/health")
 async def health():
@@ -633,10 +162,106 @@ async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
     try:
         while True:
-            # Keep connection alive
             await websocket.receive_text()
     except WebSocketDisconnect:
         manager.disconnect(websocket)
+    except:
+        manager.disconnect(websocket)
 
+@app.get("/account")
+async def get_account():
+    return await ib_service.get_account_summary()
 
+@app.get("/portfolio")
+async def get_portfolio():
+    return await ib_service.get_portfolio()
 
+@app.get("/orders")
+async def get_orders():
+    return await ib_service.get_today_orders()
+
+@app.post("/order")
+async def place_order(req: dict):
+    try:
+        res = await ib_service.place_order(
+            ticker_symbol=req['ticker'],
+            action=req['action'],
+            quantity=req['quantity'],
+            stop_loss_price=req.get('stop_loss')
+        )
+        return {"status": "success", "order_id": res}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.post("/orders/{order_id}/cancel")
+async def cancel_order(order_id: int):
+    if ib_service.cancel_order(order_id):
+        return {"status": "cancelled"}
+    raise HTTPException(status_code=400, detail="Cancellation failed")
+
+@app.post("/positions/close")
+async def close_position(ticker: str):
+    try:
+        await ib_service.close_position(ticker)
+        return {"status": "closed"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.get("/strategies")
+async def list_strategies():
+    return strategies
+
+@app.post("/strategies")
+async def create_strategy(req: StrategyRequest):
+    s = Strategy(
+        id=str(uuid.uuid4())[:8],
+        ticker=req.ticker,
+        entry_price=req.entry_price,
+        stop_loss=req.stop_loss,
+        quantity=req.quantity,
+        status="active",
+        created_at=datetime.now().isoformat()
+    )
+    async with strategy_lock:
+        strategies.append(s)
+    await ib_service.subscribe_market_data(req.ticker)
+    log_strategy_event(f"🎯 Strategy Set: {req.ticker} at ${req.entry_price}")
+    return s
+
+@app.delete("/strategies/{strategy_id}")
+async def delete_strategy(strategy_id: str):
+    async with strategy_lock:
+        global strategies
+        strategies = [s for s in strategies if s.id != strategy_id]
+    return {"status": "deleted"}
+
+@app.patch("/strategies/{id}")
+async def update_strategy(id: str, update: StrategyUpdate):
+    async with strategy_lock:
+        for s in strategies:
+            if s.id == id:
+                if update.is_live is not None: s.is_live = update.is_live
+                return s
+    raise HTTPException(status_code=404, detail="Strategy not found")
+
+@app.get("/logs")
+async def get_logs():
+    return list(strategy_logs)
+
+@app.post("/history/download")
+async def download_history(req: dict):
+    try:
+        path = await ib_service.download_historical_data(
+            req['ticker'], req['start_date'], req['end_date'], req.get('bar_size', '1 min')
+        )
+        return {"file": path}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.post("/test/price")
+async def set_test_price(req: dict):
+    ticker = req['ticker']
+    price = float(req['price'])
+    await manager.broadcast({"type": "price", "ticker": ticker, "price": price})
+    await check_strategies(ticker, price)
+    return {"status": "price_updated", "ticker": ticker, "price": price}

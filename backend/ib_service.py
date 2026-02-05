@@ -1,9 +1,13 @@
-from ib_insync import *
-from datetime import datetime
-import pandas as pd
+import nest_asyncio
 import asyncio
 import os
 import logging
+from datetime import datetime
+import pandas as pd
+from ib_insync import *
+
+# Fix for "event loop already running" (essential for FastAPI + ib_insync)
+nest_asyncio.apply()
 
 logger = logging.getLogger("IBService")
 
@@ -99,7 +103,7 @@ class IBIntegration:
             try:
                 await asyncio.sleep(1) 
                 logger.info("Requesting All Open Orders...")
-                self.ib.reqAllOpenOrders()
+                await self.ib.reqAllOpenOrdersAsync()
             except Exception as e:
                 logger.warning(f"Could not request open orders: {e}")
             
@@ -145,11 +149,15 @@ class IBIntegration:
             logger.warning(f"Heartbeat failed: {e}")
             return False
 
-    def sync_open_orders(self):
-        """Manually trigger a pull of all open orders from IBKR (including manual TWS ones)"""
+    async def sync_open_orders(self):
+        """Asynchronously pull all open orders (including TWS ones)"""
         if self.ib.isConnected():
              print("🔄 Syncing Open Orders with IBKR...")
-             self.ib.reqAllOpenOrders()
+             try:
+                 # Use Async variant to prevent 'loop already running' errors
+                 await self.ib.reqAllOpenOrdersAsync()
+             except Exception as e:
+                 print(f"Failed to sync orders: {e}")
 
     def register_order_callback(self, cb):
         self.order_callbacks.append(cb)
@@ -435,8 +443,8 @@ class IBIntegration:
         self.price_callbacks.append(callback)
 
     # - [x] Fetch Active Stop Loss for Portfolio (Backend) <!-- id: 20 -->
-    def get_portfolio(self):
-        """Returns the current portfolio items with detailed P&L"""
+    async def get_portfolio(self):
+        """Returns the current portfolio items with detailed P&L (Asynchronous)"""
         if not self.check_connection:
             return []
             
@@ -591,8 +599,8 @@ class IBIntegration:
             })
         return portfolio_items
 
-    def get_today_orders(self):
-        """Returns all orders (active and executed) for the current session"""
+    async def get_today_orders(self):
+        """Returns all orders (active and executed) for the current session (Asynchronous)"""
         if not self.check_connection:
             return []
             
@@ -657,8 +665,8 @@ class IBIntegration:
         orders_data.sort(key=lambda x: x['id'], reverse=True)
         return orders_data
 
-    def get_account_summary(self):
-        """Returns account summary metrics"""
+    async def get_account_summary(self):
+        """Returns account summary metrics (Asynchronous)"""
         if not self.check_connection:
             return None
             
@@ -687,7 +695,7 @@ class IBIntegration:
         # 2. Calculate Daily P&L from Portfolio
         # Summing our own calculated daily P&L ensures consistency with the table
         try:
-            portfolio = self.get_portfolio()
+            portfolio = await self.get_portfolio()
             total_daily_pnl = sum([item.get('today_pnl', 0.0) for item in portfolio])
             summary['daily_pnl'] = total_daily_pnl
             
