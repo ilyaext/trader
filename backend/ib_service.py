@@ -291,21 +291,25 @@ class IBIntegration:
         # Ensure we have an Order ID for the parent to link the child
         parent.orderId = self.ib.client.getReqId()
         orders_to_place = [parent]
+        logger.info(f"DEBUG: [place_order] Parent ID: {parent.orderId} for {ticker_symbol}")
 
         # Stop Loss (Child)
         if stop_loss_price and stop_loss_price > 0:
             parent.transmit = False # Do not transmit until child is linked
             
             stop_action = "SELL" if action == "BUY" else "BUY"
-            child = StopOrder(stop_action, quantity, stop_loss_price)
+            # Enable outsideRth=True to ensure the stop order is accepted during pre/post market
+            child = StopOrder(stop_action, quantity, stop_loss_price, outsideRth=True)
             child.parentId = parent.orderId
             child.transmit = True # Transmit the whole bracket
             orders_to_place.append(child)
+            logger.info(f"DEBUG: [place_order] Added StopLoss Child (Parent: {parent.orderId}) at ${stop_loss_price}")
         else:
             parent.transmit = True
 
         trades = []
         for o in orders_to_place:
+             logger.info(f"DEBUG: [place_order] Dispatching -> {o.action} {o.orderType} | ID: {o.orderId} | Parent: {o.parentId} | Transmit: {o.transmit}")
              t = self.ib.placeOrder(contract, o)
              trades.append(t)
         
