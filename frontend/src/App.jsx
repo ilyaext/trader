@@ -390,7 +390,7 @@ const App = () => {
                                 </section>
 
                                 <section className="card">
-                                    <div className="card-title"><Activity size={18} className="blue" /> Breakout Manager</div>
+                                    <div className="card-title"><Activity size={18} className="blue" /> Create Alert</div>
                                     <form className="form-grid form-grid-compact" onSubmit={createStrategy}>
                                         <div className="form-group">
                                             <label>Ticker</label>
@@ -415,7 +415,7 @@ const App = () => {
 
                             {/* Strategies Terminal */}
                             <section className="card">
-                                <div className="card-title">📡 Monitored Strategies</div>
+                                <div className="card-title">📡 Alerts</div>
                                 <div className="table-container">
                                     <table>
                                         <thead>
