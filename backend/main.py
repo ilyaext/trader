@@ -64,19 +64,42 @@ async def check_strategies(symbol, price):
     async with strategy_lock:
         for s in strategies:
             if s.ticker == symbol and s.status == "active":
-                if price >= s.entry_price:
-                    log_strategy_event(f"🚀 BREAKOUT: {symbol} at ${price:.2f} (Target: {s.entry_price})")
-                    s.status = "triggered"
-                    try:
-                        await ib_service.place_order(
-                            ticker_symbol=symbol,
-                            action="BUY",
-                            quantity=s.quantity,
-                            stop_loss_price=s.stop_loss
-                        )
-                        log_strategy_event(f"✅ Order Placed for {symbol} ({s.quantity} shares)")
-                    except Exception as e:
-                        log_strategy_event(f"❌ Order Failed for {symbol}: {e}")
+                # Check Breakout Condition (2-Candle/Tick Confirmation)
+                # Rule: Two sequential updates must be above Entry.
+                # Current > Previous > Entry Price
+                
+                # Default: Reset sequence if price drops below entry
+                if price <= s.entry_price:
+                    if s.last_seen_price is not None:
+                        log_strategy_event(f"📉 Reset Sequence: {symbol} at ${price:.2f} (<= {s.entry_price})")
+                    s.last_seen_price = None
+                else:
+                    # Price is above entry price
+                    if s.last_seen_price is not None:
+                        # We have a previous update above entry.
+                        # Check if current is higher than previous (momentum confirmation)
+                        if price > s.last_seen_price:
+                            log_strategy_event(f"🚀 BREAKOUT: {symbol} at ${price:.2f} > ${s.last_seen_price:.2f} (Target: {s.entry_price})")
+                            s.status = "triggered"
+                            try:
+                                await ib_service.place_order(
+                                    ticker_symbol=symbol,
+                                    action="BUY",
+                                    quantity=s.quantity,
+                                    stop_loss_price=s.stop_loss
+                                )
+                                log_strategy_event(f"✅ Order Placed for {symbol} ({s.quantity} shares)")
+                            except Exception as e:
+                                log_strategy_event(f"❌ Order Failed for {symbol}: {e}")
+                        else:
+                            # Price is above entry, but not higher than previous.
+                            # It becomes the new base for the next check.
+                            s.last_seen_price = price
+                    else:
+                        # First update above entry
+                        log_strategy_event(f"👀 Potential Breakout: {symbol} at ${price:.2f} (> {s.entry_price})")
+                        s.last_seen_price = price
+                
                 s.current_price = price
 
 async def on_price_update(ticker):
