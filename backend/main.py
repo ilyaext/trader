@@ -89,12 +89,39 @@ async def check_strategies(symbol, price, source="UNKNOWN"):
     symbol = symbol.strip().upper()
     
     async with strategy_lock:
+        # 1. Handle ACTIVE strategies (Breakout Detection)
         active_for_ticker = [s for s in strategies if s.ticker.upper() == symbol and s.status == "active"]
         
-        # DEBUG: Trace the specific call and matching strategies
-        print(f"DEBUG: [check_strategies] Tick {symbol} @ {price} | Source: {source} | Matches: {len(active_for_ticker)}")
+        # 2. Handle TRIGGERED strategies (False Breakout Detection)
+        triggered_for_ticker = [s for s in strategies if s.ticker.upper() == symbol and s.status == "triggered"]
+        
+        # DEBUG: Trace the specific call
+        print(f"DEBUG: [check_strategies] Tick {symbol} @ {price} | Source: {source} | Active: {len(active_for_ticker)} | Triggered: {len(triggered_for_ticker)}")
 
+        # --- Part A: Check False Breakouts ---
+        for s in triggered_for_ticker:
+            if price < s.entry_price:
+                # BREAKOUT FAILED: Price dropped below original entry
+                log_strategy_event(f"🚨 FALSE BREAKOUT [{s.id}]: {symbol} at ${price:.2f} (< {s.entry_price:.2f}). Resetting...")
+                
+                # 1. Close the position & Cancel associated orders
+                try:
+                    await ib_service.close_position(symbol)
+                    log_strategy_event(f"🧹 Cleaned up {symbol} for [{s.id}]")
+                except Exception as e:
+                    print(f"DEBUG: [False Breakout Cleanup] Failed for {symbol}: {e}")
+                
+                # 2. Reset the strategy state
+                s.status = "active"
+                s.last_seen_price = None
+                s.current_price = price
+                # Don't return, allow it to be processed as active if needed (unlikely in same tick)
+
+        # --- Part B: Check New Breakouts ---
         if not active_for_ticker:
+            # Update current price for any other trackers and exit
+            for s in strategies:
+                if s.ticker.upper() == symbol: s.current_price = price
             return
 
         # Only process the FIRST active strategy found for this ticker

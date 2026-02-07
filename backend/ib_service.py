@@ -329,7 +329,8 @@ class IBIntegration:
              logger.info(f"DEBUG: [place_order] Dispatching -> {o.action} {o.orderType} | ID: {o.orderId} | Parent: {o.parentId} | Transmit: {o.transmit}")
              if is_test:
                  # Manually create a Trade object and put it in memory
-                 status = OrderStatus(status='Submitted', filled=0, remaining=o.totalQuantity)
+                 # Set status to 'Filled' immediately so it moves to history and appears in portfolio
+                 status = OrderStatus(status='Filled', filled=o.totalQuantity, remaining=0, avgFillPrice=o.lmtPrice if (o.lmtPrice < 1e10) else 100.0)
                  t = Trade(contract, o, status, [], [])
                  self.ib.wrapper.trades[o.orderId] = t
              else:
@@ -548,40 +549,45 @@ class IBIntegration:
 
     async def close_position(self, ticker_symbol):
         """Closes an entire position at Market price and cleans up open orders"""
-        is_test = ticker_symbol.upper() == "TEST"
+        ticker_symbol = ticker_symbol.upper()
+        is_test = ticker_symbol == "TEST"
         
         if not is_test and not self.check_connection:
             raise Exception("IBKR not connected")
             
         # 1. Cancel all open orders for this ticker (Cleanup)
-        for trade in self.ib.openTrades():
-            if trade.contract.symbol == ticker_symbol:
-                print(f"🧹 [Cleanup] Cancelling open order for {ticker_symbol}: {trade.order.orderType} {trade.order.action}", flush=True)
-                if is_test:
-                    self.force_delete_order(trade.order.orderId)
-                else:
+        # For TEST, we need to purge from our mock wrapper.trades
+        if is_test:
+            logger.info(f"🧹 Purging ALL TEST mock orders for {ticker_symbol}")
+            # Identify ALL TEST keys to delete
+            test_keys = [k for k, t in self.ib.wrapper.trades.items() if t.contract.symbol == "TEST"]
+            for k in test_keys:
+                self.force_delete_order(k)
+        else:
+            for trade in self.ib.openTrades():
+                if trade.contract.symbol == ticker_symbol:
+                    print(f"🧹 [Cleanup] Cancelling open order for {ticker_symbol}: {trade.order.orderType} {trade.order.action}", flush=True)
                     self.ib.cancelOrder(trade.order)
-                # Small sleep to allow TWS to process the cancellation
-                await asyncio.sleep(0.5)
+                    # Small sleep to allow TWS to process the cancellation
+                    await asyncio.sleep(0.5)
 
         # 2. Find the position to close
+        if is_test:
+             # For TEST, we skip the actual market order and just return success (orders are purged above)
+             logger.info(f"✅ Mock CLOSED TEST position for {ticker_symbol}")
+             return None
+
         positions = self.ib.positions()
         target_pos = next((p for p in positions if p.contract.symbol == ticker_symbol), None)
         
         if not target_pos or target_pos.position == 0:
-            raise ValueError(f"No active position for {ticker_symbol}")
+            logger.warning(f"No active position for {ticker_symbol} to close.")
+            return None
             
         action = "SELL" if target_pos.position > 0 else "BUY"
         quantity = abs(target_pos.position)
         
         print(f"🔄 CLOSING POSITION: {ticker_symbol} ({quantity} shares)", flush=True)
-        if is_test:
-            # Mock the closing of a TEST position
-            logger.info(f"Mock closing TEST position: {quantity} shares")
-            # We don't have a direct way to remove a position from self.ib.positions() 
-            # as it's managed by the wrapper/API, but we can at least avoid the error.
-            return None
-            
         contract = target_pos.contract
         order = MarketOrder(action, quantity)
         trade = self.ib.placeOrder(contract, order)
@@ -741,6 +747,42 @@ class IBIntegration:
                 "last_fill_date": last_fill_date, # New field
                 "account": item.account
             })
+        # --- Add MOCK TEST position if a simulated trade exists ---
+        test_fills = [t for k, t in self.ib.wrapper.trades.items() 
+                     if t.contract.symbol == "TEST" and t.order.action == "BUY" and t.orderStatus.status == "Filled"]
+        
+        if test_fills:
+            # Take the first active fill for the mock position
+            trade = test_fills[0]
+            qty = trade.order.totalQuantity
+            
+            # Look for an attached mock stop loss
+            sl_price = 0.0
+            for k, t in self.ib.wrapper.trades.items():
+                if t.contract.symbol == "TEST" and t.order.parentId == trade.order.orderId and t.order.orderType == 'STP':
+                    sl_price = t.order.auxPrice
+                    break
+            
+            # Sanity check for Average Cost (IBKR uses 1.79e308 for unset Limit Price)
+            avg_cost = trade.order.lmtPrice
+            if avg_cost > 1e10:
+                avg_cost = 100.0 # Default fallback for market orders in TEST mode
+
+            portfolio_items.append({
+                "ticker": "TEST",
+                "quantity": qty,
+                "avg_cost": avg_cost,
+                "market_price": 100.0,
+                "market_value": 100.0 * qty,
+                "unrealized_pnl": 0.0,
+                "realized_pnl": 0.0,
+                "today_pnl": 0.0,
+                "today_pnl_pct": 0.0,
+                "stop_loss": sl_price,
+                "last_fill_date": datetime.now(),
+                "account": "MOCK_TEST"
+            })
+
         return portfolio_items
 
     async def get_today_orders(self):
