@@ -399,17 +399,33 @@ class IBIntegration:
             raise e
 
     def force_delete_order(self, order_id):
-        """Forcefully removes an order from all local in-memory caches (Ghost Orders)"""
+        """Forcefully removes an order and its children from all local in-memory caches (Ghost Orders)"""
         order_id = int(order_id)
-        cleared = False
         
-        # 1. Remove from wrapper's trades dictionary
-        if order_id in self.ib.wrapper.trades:
-            del self.ib.wrapper.trades[order_id]
-            logger.info(f"Force deleted Ghost Order {order_id} from wrapper.trades")
-            cleared = True
+        # 1. Check if it's already gone to break recursion
+        if order_id not in self.ib.wrapper.trades:
+            return False
+            
+        # 2. Remove the parent FIRST to break cycles
+        del self.ib.wrapper.trades[order_id]
+        logger.info(f"Force deleted Ghost Order {order_id} from wrapper.trades")
 
-        return cleared or True
+        # 3. Recursive cleanup for child orders (e.g. Stop Loss)
+        child_ids = []
+        try:
+            # We use list(dict.items()) to safely iterate while items might be removed in recursion
+            for tid, t in list(self.ib.wrapper.trades.items()):
+                p_id = getattr(t.order, 'parentId', 0)
+                if p_id == order_id and tid != order_id:
+                    child_ids.append(tid)
+        except Exception as e:
+            logger.warning(f"Error searching for child orders of {order_id}: {e}")
+
+        for cid in child_ids:
+            logger.info(f"Cascading force-delete to child order {cid} (Parent: {order_id})")
+            self.force_delete_order(cid)
+
+        return True
 
     async def download_historical_data(self, ticker_symbol, start_date, end_date, bar_size="1 day"):
         if ticker_symbol.upper() == "TEST":
