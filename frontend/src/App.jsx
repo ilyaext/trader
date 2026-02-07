@@ -377,9 +377,11 @@ const App = () => {
                                                     <td className="mono">{fmtUSD(p.avg_cost)}</td>
                                                     <td className="mono">{p.stop_loss > 0 ? fmtUSD(p.stop_loss) : '-'}</td>
                                                     <td className="mono">{p.risk_amount !== 0 ? fmtUSD(p.risk_amount) : '-'}</td>
-                                                    <button className="btn-icon" onClick={() => closePosition(p.ticker)}>
-                                                        <Trash2 size={14} />
-                                                    </button>
+                                                    <td style={{ textAlign: 'right' }}>
+                                                        <button className="btn-icon" onClick={() => closePosition(p.ticker)}>
+                                                            <Trash2 size={14} />
+                                                        </button>
+                                                    </td>
                                                 </tr>
                                             )) : (
                                                 <tr><td colSpan="9" style={{ textAlign: 'center', color: '#8b949e', padding: '2rem' }}>No open positions.</td></tr>
