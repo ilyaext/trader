@@ -120,7 +120,19 @@ const App = () => {
 
         const parentIds = parents.map(p => p.id);
         const orphans = children.filter(c => !parentIds.includes(c.parent_id));
-        return [...parents, ...orphans];
+        const combined = [...parents, ...orphans];
+
+        const activeStatuses = ['Submitted', 'PreSubmitted', 'PendingSubmit', 'ApiPending', 'Simulated', 'Inactive']; // Inactive can stay at top if it might turn active, but user said Active (working)
+        // Let's stick to the "Actionable" ones
+        const priorityStatuses = ['Submitted', 'PreSubmitted', 'PendingSubmit', 'ApiPending', 'Simulated'];
+
+        return combined.sort((a, b) => {
+            const aPrio = priorityStatuses.includes(a.status) ? 0 : (a.status === 'Filled' ? 1 : 2);
+            const bPrio = priorityStatuses.includes(b.status) ? 0 : (b.status === 'Filled' ? 1 : 2);
+            if (aPrio !== bPrio) return aPrio - bPrio;
+            // Newest first within same priority
+            return b.time.localeCompare(a.time);
+        });
     }, [orders]);
 
     // Actions
@@ -145,11 +157,13 @@ const App = () => {
     };
 
     const cancelOrder = async (orderId) => {
+        if (!window.confirm("Are you sure you want to cancel this order?")) return;
         await axios.post(`${API_BASE}/orders/${orderId}/cancel`);
         fetchAll();
     };
 
     const deleteStrategy = async (id) => {
+        if (!window.confirm("Are you sure you want to delete this alert?")) return;
         await axios.delete(`${API_BASE}/strategies/${id}`);
         fetchAll();
     };

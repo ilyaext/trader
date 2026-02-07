@@ -237,6 +237,12 @@ async def cancel_order(order_id: int):
         return {"status": "cancelled"}
     raise HTTPException(status_code=400, detail="Cancellation failed")
 
+@app.post("/orders/{order_id}/purge")
+async def purge_order(order_id: int):
+    if ib_service.force_delete_order(order_id):
+        return {"status": "purged"}
+    raise HTTPException(status_code=400, detail="Order not found in memory")
+
 @app.post("/positions/close")
 async def close_position(ticker: str):
     try:

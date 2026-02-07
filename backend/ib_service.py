@@ -180,6 +180,11 @@ class IBIntegration:
 
     async def robust_qualify_contract(self, ticker_symbol):
         """Attempts to qualify a stock contract with multiple fallback strategies"""
+        if ticker_symbol.upper() == "TEST":
+            c = Stock('TEST', 'SMART', 'USD')
+            c.conId = 9999999
+            return c
+
         # 1. Try SMART (Preferred)
         c = Stock(ticker_symbol, 'SMART', 'USD')
         try:
@@ -216,6 +221,9 @@ class IBIntegration:
         return c # Return the failed contract (conId=0)
 
     async def get_price(self, ticker_symbol):
+        if ticker_symbol.upper() == "TEST":
+            return 100.0 # Mock price for TEST
+            
         if not self.check_connection:
             return 0.0
         
@@ -278,9 +286,18 @@ class IBIntegration:
         if not self.check_connection:
             raise Exception("IBKR not connected")
 
-        contract = await self.robust_qualify_contract(ticker_symbol)
-        if contract.conId == 0:
-            raise ValueError(f"Invalid Ticker: {ticker_symbol}")
+        # Intercept TEST ticker for simulated management
+        is_test = ticker_symbol.upper() == "TEST"
+        
+        contract = None
+        if is_test:
+            # Create a mock contract for TEST
+            contract = Stock('TEST', 'SMART', 'USD')
+            contract.conId = 9999999 # Fake ID
+        else:
+            contract = await self.robust_qualify_contract(ticker_symbol)
+            if contract.conId == 0:
+                raise ValueError(f"Invalid Ticker: {ticker_symbol}")
         
         # Parent Order
         if order_type.upper() == "LIMIT":
@@ -310,50 +327,94 @@ class IBIntegration:
         trades = []
         for o in orders_to_place:
              logger.info(f"DEBUG: [place_order] Dispatching -> {o.action} {o.orderType} | ID: {o.orderId} | Parent: {o.parentId} | Transmit: {o.transmit}")
-             t = self.ib.placeOrder(contract, o)
+             if is_test:
+                 # Manually create a Trade object and put it in memory
+                 status = OrderStatus(status='Submitted', filled=0, remaining=o.totalQuantity)
+                 t = Trade(contract, o, status, [], [])
+                 self.ib.wrapper.trades[o.orderId] = t
+             else:
+                 t = self.ib.placeOrder(contract, o)
              trades.append(t)
         
         # Ensure we are subscribed to market data so we can track price in Orders table
-        # Check if already subscribed
-        is_subscribed = False
-        for t in self.ib.tickers():
-            if t.contract.symbol == ticker_symbol:
-                is_subscribed = True
-                break
-        
-        if not is_subscribed:
-            print(f"DEBUG: Auto-subscribing to {ticker_symbol} for order tracking")
-            self.ib.reqMktData(contract, '', False, False)
+        if not is_test:
+            # Check if already subscribed
+            is_subscribed = False
+            for t in self.ib.tickers():
+                if t.contract.symbol == ticker_symbol:
+                    is_subscribed = True
+                    break
+            
+            if not is_subscribed:
+                print(f"DEBUG: Auto-subscribing to {ticker_symbol} for order tracking")
+                self.ib.reqMktData(contract, '', False, False)
         
         return trades[0] # Return parent trade
 
     def cancel_order(self, order_id):
         """Cancels an active order by ID"""
-        if not self.check_connection:
-            raise Exception("IBKR not connected")
+        try:
+            print(f"DEBUG: [cancel_order] Request for ID {order_id}", flush=True)
+            if not self.check_connection:
+                raise Exception("IBKR not connected")
+                
+            order_id = int(order_id)
             
-        # Look in open orders first (most likely)
-        target_order = None
-        for trade in self.ib.openTrades():
-            if trade.order.orderId == int(order_id):
-                target_order = trade.order
-                break
+            # Check if it's a TEST order by looking it up in memory
+            target_trade = None
+            for trade in self.ib.trades():
+                if trade.order.orderId == order_id:
+                    target_trade = trade
+                    break
+            
+            if target_trade:
+                print(f"DEBUG: [cancel_order] Found trade for {target_trade.contract.symbol}", flush=True)
+                if target_trade.contract.symbol == "TEST":
+                    logger.info(f"Purging TEST ghost order {order_id}")
+                    self.force_delete_order(order_id)
+                    return True
+
+            # Normal cancellation flow
+            target_order = None
+            for trade in self.ib.openTrades():
+                if trade.order.orderId == order_id:
+                    target_order = trade.order
+                    break
+            
+            if not target_order:
+                 for order in self.ib.orders():
+                     if order.orderId == order_id:
+                         target_order = order
+                         break
+            
+            if target_order:
+                self.ib.cancelOrder(target_order)
+                logger.info(f"Requested cancellation for Order {order_id}")
+                return True
+            else:
+                raise ValueError(f"Order {order_id} not found or already filled/cancelled")
+        except Exception as e:
+            print(f"ERROR: [cancel_order] failed for {order_id}: {e}", flush=True)
+            logger.error(f"Cancellation error: {e}", exc_info=True)
+            raise e
+
+    def force_delete_order(self, order_id):
+        """Forcefully removes an order from all local in-memory caches (Ghost Orders)"""
+        order_id = int(order_id)
+        cleared = False
         
-        # If not found in open trades, check all orders (edge case where it might be in valid list but not active?)
-        if not target_order:
-             for order in self.ib.orders():
-                 if order.orderId == int(order_id):
-                     target_order = order
-                     break
-        
-        if target_order:
-            self.ib.cancelOrder(target_order)
-            logger.info(f"Requested cancellation for Order {order_id}")
-            return True
-        else:
-            raise ValueError(f"Order {order_id} not found or already filled/cancelled")
+        # 1. Remove from wrapper's trades dictionary
+        if order_id in self.ib.wrapper.trades:
+            del self.ib.wrapper.trades[order_id]
+            logger.info(f"Force deleted Ghost Order {order_id} from wrapper.trades")
+            cleared = True
+
+        return cleared or True
 
     async def download_historical_data(self, ticker_symbol, start_date, end_date, bar_size="1 day"):
+        if ticker_symbol.upper() == "TEST":
+             raise ValueError("Historical data not available for TEST ticker")
+
         if not self.check_connection:
             raise Exception("IBKR not connected")
             
@@ -426,6 +487,9 @@ class IBIntegration:
                     logger.error(f"Error in price callback: {e}")
 
     async def subscribe_market_data(self, ticker_symbol):
+        if ticker_symbol.upper() == "TEST":
+            return
+
         if not self.check_connection:
             return
             
@@ -459,14 +523,19 @@ class IBIntegration:
 
     async def close_position(self, ticker_symbol):
         """Closes an entire position at Market price and cleans up open orders"""
-        if not self.check_connection:
+        is_test = ticker_symbol.upper() == "TEST"
+        
+        if not is_test and not self.check_connection:
             raise Exception("IBKR not connected")
             
         # 1. Cancel all open orders for this ticker (Cleanup)
         for trade in self.ib.openTrades():
             if trade.contract.symbol == ticker_symbol:
                 print(f"🧹 [Cleanup] Cancelling open order for {ticker_symbol}: {trade.order.orderType} {trade.order.action}", flush=True)
-                self.ib.cancelOrder(trade.order)
+                if is_test:
+                    self.force_delete_order(trade.order.orderId)
+                else:
+                    self.ib.cancelOrder(trade.order)
                 # Small sleep to allow TWS to process the cancellation
                 await asyncio.sleep(0.5)
 
@@ -481,6 +550,13 @@ class IBIntegration:
         quantity = abs(target_pos.position)
         
         print(f"🔄 CLOSING POSITION: {ticker_symbol} ({quantity} shares)", flush=True)
+        if is_test:
+            # Mock the closing of a TEST position
+            logger.info(f"Mock closing TEST position: {quantity} shares")
+            # We don't have a direct way to remove a position from self.ib.positions() 
+            # as it's managed by the wrapper/API, but we can at least avoid the error.
+            return None
+            
         contract = target_pos.contract
         order = MarketOrder(action, quantity)
         trade = self.ib.placeOrder(contract, order)
@@ -510,7 +586,8 @@ class IBIntegration:
             # We switched back from Snapshot Polling to Streaming because Snapshot spamming might be throttling 
             # or ineffective in sync loops.
             # CRITICAL FIX: Ensure exchange='SMART' is used for the subscription to avoid Error 321.
-            if not ticker:
+            # BYPASS: Do not request market data for TEST ticker
+            if not ticker and item.contract.symbol != "TEST":
                  contract_for_sub = item.contract
                  contract_for_sub.exchange = 'SMART'
                  
@@ -534,7 +611,9 @@ class IBIntegration:
             # Use Ticker's calculated market price (robust fallback) if available, otherwise item.marketPrice
             current_price = item.marketPrice
             
-            if ticker:
+            if item.contract.symbol == "TEST":
+                current_price = 100.0
+            elif ticker:
                 # Use our robust price logic 
                 # CHANGE: Prioritize LAST price (matches TradingView/Brokers) over Midpoint (marketPrice)
                 
@@ -661,6 +740,9 @@ class IBIntegration:
                         return t
                 
                 # 2. If not found, subscribe (Auto-Recovery for manual/TWS orders)
+                if symbol == "TEST":
+                    return None
+                    
                 c = Stock(symbol, 'SMART', 'USD')
                 self.ib.reqMktData(c, '', False, False)
                 return None # Will be available next tick
