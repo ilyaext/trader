@@ -42,12 +42,17 @@ class ConnectionManager:
             self.active_connections.remove(websocket)
 
     async def broadcast(self, message: dict):
-        for connection in self.active_connections:
+        # Create a copy to safely iterate while pruning
+        to_remove = []
+        for connection in list(self.active_connections):
             try:
                 await connection.send_text(json.dumps(message))
             except Exception as e:
-                print(f"⚠️ [WS ERROR] Failed to send: {e}", flush=True)
-                pass
+                print(f"⚠️ [WS ERROR] Connection stale, pruning: {e}", flush=True)
+                to_remove.append(connection)
+        
+        for conn in to_remove:
+            self.disconnect(conn)
 
 manager = ConnectionManager()
 ib_service = live_get_ib_service()
@@ -55,56 +60,93 @@ ib_service = live_get_ib_service()
 def log_strategy_event(msg: str):
     """Log an event to the global buffer and broadcast via WS"""
     timestamp = datetime.now().strftime("%H:%M:%S")
-    formatted = f"[{timestamp}] {msg}"
-    strategy_logs.appendleft(formatted)
-    print(f"STRATEGY LOG: {msg}")
-    asyncio.create_task(manager.broadcast({"type": "log", "data": formatted}))
+    # Add a millisecond part to the timestamp to distinguish rapid logs
+    ms = datetime.now().strftime("%f")[:3]
+    formatted = f"[{timestamp}.{ms}] {msg}"
+    
+    # Generate a unique ID for this specific log event to allow UI deduplication
+    log_entry = {
+        "id": str(uuid.uuid4())[:12],
+        "text": formatted,
+        "timestamp": timestamp
+    }
+    
+    # store formatted string for backward compatibility in /logs endpoint
+    strategy_logs.appendleft(log_entry)
+    
+    # TRACE: Number of connections we are broadcasting to
+    conn_count = len(manager.active_connections)
+    print(f"DEBUG: [CORE LOG] {formatted} (ID: {log_entry['id']}, Clients: {conn_count})")
+    
+    asyncio.create_task(manager.broadcast({
+        "type": "log", 
+        "data": log_entry['text'],
+        "log_id": log_entry['id']
+    }))
 
-async def check_strategies(symbol, price):
+async def check_strategies(symbol, price, source="UNKNOWN"):
+    # Normalize input
+    symbol = symbol.strip().upper()
+    
     async with strategy_lock:
-        for s in strategies:
-            if s.ticker == symbol and s.status == "active":
-                # Check Breakout Condition (2-Candle/Tick Confirmation)
-                # Rule: Two sequential updates must be above Entry.
-                # Current > Previous > Entry Price
-                
-                # Default: Reset sequence if price drops below entry
-                if price <= s.entry_price:
-                    if s.last_seen_price is not None:
-                        log_strategy_event(f"📉 Reset Sequence: {symbol} at ${price:.2f} (<= {s.entry_price})")
-                    s.last_seen_price = None
+        active_for_ticker = [s for s in strategies if s.ticker.upper() == symbol and s.status == "active"]
+        
+        # DEBUG: Trace the specific call and matching strategies
+        print(f"DEBUG: [check_strategies] Tick {symbol} @ {price} | Source: {source} | Matches: {len(active_for_ticker)}")
+
+        if not active_for_ticker:
+            return
+
+        # Only process the FIRST active strategy found for this ticker
+        s = active_for_ticker[0]
+        
+        # Rule: Two sequential updates must be above Entry.
+        
+        # Default: Reset sequence if price drops below entry
+        if price <= s.entry_price:
+            if s.last_seen_price is not None:
+                log_strategy_event(f"📉 Reset Sequence: {symbol} at ${price:.2f} (<= {s.entry_price}) [ID: {s.id}]")
+            s.last_seen_price = None
+        else:
+            # Price is above entry price
+            if s.last_seen_price is not None:
+                # Double check status inside lock
+                if s.status != "active":
+                    return
+
+                # Check if current is higher than previous (momentum confirmation)
+                if price > s.last_seen_price:
+                    log_strategy_event(f"🚀 BREAKOUT [{s.id}]: {symbol} at ${price:.2f} > ${s.last_seen_price:.2f} (Target: {s.entry_price})")
+                    s.status = "triggered"
+                    try:
+                        await ib_service.place_order(
+                            ticker_symbol=symbol,
+                            action="BUY",
+                            quantity=s.quantity,
+                            stop_loss_price=s.stop_loss
+                        )
+                        log_strategy_event(f"✅ Order Placed [{s.id}] for {symbol} ({s.quantity} shares)")
+                    except Exception as e:
+                        log_strategy_event(f"❌ Order Failed [{s.id}] for {symbol}: {e}")
                 else:
-                    # Price is above entry price
-                    if s.last_seen_price is not None:
-                        # We have a previous update above entry.
-                        # Check if current is higher than previous (momentum confirmation)
-                        if price > s.last_seen_price:
-                            log_strategy_event(f"🚀 BREAKOUT: {symbol} at ${price:.2f} > ${s.last_seen_price:.2f} (Target: {s.entry_price})")
-                            s.status = "triggered"
-                            try:
-                                await ib_service.place_order(
-                                    ticker_symbol=symbol,
-                                    action="BUY",
-                                    quantity=s.quantity,
-                                    stop_loss_price=s.stop_loss
-                                )
-                                log_strategy_event(f"✅ Order Placed for {symbol} ({s.quantity} shares)")
-                            except Exception as e:
-                                log_strategy_event(f"❌ Order Failed for {symbol}: {e}")
-                        else:
-                            # Price is above entry, but not higher than previous.
-                            # It becomes the new base for the next check.
-                            s.last_seen_price = price
-                    else:
-                        # First update above entry
-                        log_strategy_event(f"👀 Potential Breakout: {symbol} at ${price:.2f} (> {s.entry_price})")
+                    # Update base price if it's different
+                    if s.last_seen_price != price:
                         s.last_seen_price = price
-                
-                s.current_price = price
+            else:
+                # First update above entry
+                log_strategy_event(f"👀 Potential Breakout [{s.id}]: {symbol} at ${price:.2f} (> {s.entry_price})")
+                s.last_seen_price = price
+        
+        s.current_price = price
 
 async def on_price_update(ticker):
     """Callback for real-time price updates"""
-    symbol = ticker.contract.symbol
+    symbol = ticker.contract.symbol.upper()
+    
+    # IGNORE 'TEST' ticker from live callbacks to prevent duplication with manual injection
+    if symbol == "TEST":
+        return
+
     price = ticker.marketPrice() or ticker.last or ticker.close
     if price and price > 0:
         # Avoid spamming logs for price updates unless debugging core flow
@@ -113,7 +155,7 @@ async def on_price_update(ticker):
             "ticker": symbol,
             "price": price
         }))
-        await check_strategies(symbol, price)
+        await check_strategies(symbol, price, source="LIVE_TICK")
 
 async def on_order_update(trade):
     """Callback for real-time order status changes"""
@@ -280,19 +322,28 @@ async def list_strategies():
 
 @app.post("/strategies")
 async def create_strategy(req: StrategyRequest):
-    s = Strategy(
-        id=str(uuid.uuid4())[:8],
-        ticker=req.ticker,
-        entry_price=req.entry_price,
-        stop_loss=req.stop_loss,
-        quantity=req.quantity,
-        status="active",
-        created_at=datetime.now().isoformat()
-    )
+    # Normalize ticker
+    ticker = req.ticker.strip().upper()
+    
     async with strategy_lock:
+        # Prevent duplicate active strategies for the same ticker to avoid duplicate orders
+        for s in strategies:
+            if s.ticker.upper() == ticker and s.status == "active":
+                raise HTTPException(status_code=400, detail=f"Active strategy for {ticker} already exists")
+
+        s = Strategy(
+            id=str(uuid.uuid4())[:8],
+            ticker=ticker,
+            entry_price=req.entry_price,
+            stop_loss=req.stop_loss,
+            quantity=req.quantity,
+            status="active",
+            created_at=datetime.now().isoformat()
+        )
         strategies.append(s)
-    await ib_service.subscribe_market_data(req.ticker)
-    log_strategy_event(f"🎯 Strategy Set: {req.ticker} at ${req.entry_price}")
+    
+    await ib_service.subscribe_market_data(ticker)
+    log_strategy_event(f"🎯 Strategy Set: {ticker} at ${req.entry_price} [ID: {s.id}]")
     return s
 
 @app.delete("/strategies/{strategy_id}")
@@ -327,8 +378,8 @@ async def download_history(req: dict):
 
 @app.post("/test/price")
 async def set_test_price(req: dict):
-    ticker = req['ticker']
+    ticker = req['ticker'].strip().upper()
     price = float(req['price'])
     await manager.broadcast({"type": "price", "ticker": ticker, "price": price})
-    await check_strategies(ticker, price)
+    await check_strategies(ticker, price, source="MANUAL_TEST")
     return {"status": "price_updated", "ticker": ticker, "price": price}

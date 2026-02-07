@@ -40,7 +40,7 @@ const App = () => {
     // Initial Fetching
     const fetchAll = async () => {
         try {
-            const [hRes, aRes, pRes, oRes, sRes, lRes] = await Promise.all([
+            const [hRes, aRes, pRes, oRes, sRes, lRes, cRes] = await Promise.all([
                 axios.get(`${API_BASE}/health`),
                 axios.get(`${API_BASE}/account`),
                 axios.get(`${API_BASE}/portfolio`),
@@ -54,7 +54,7 @@ const App = () => {
             setPortfolio(pRes.data);
             setOrders(oRes.data);
             setStrategies(sRes.data);
-            setLogs(lRes.data);
+            setLogs(lRes.data.map(l => typeof l === 'string' ? { id: Math.random().toString(), text: l } : l));
             setConfig(cRes.data);
         } catch (err) {
             console.error("Fetch Error:", err);
@@ -91,7 +91,14 @@ const App = () => {
                     // Trigger a full re-fetch to update orders, portfolio, and account
                     fetchAll();
                 } else if (msg.type === 'log') {
-                    setLogs(prev => [msg.data, ...prev].slice(0, 50));
+                    setLogs(prev => {
+                        // Deduplicate using log_id if available
+                        if (msg.log_id && prev.some(l => l.id === msg.log_id)) {
+                            return prev;
+                        }
+                        const newEntry = { id: msg.log_id || Math.random().toString(), text: msg.data };
+                        return [newEntry, ...prev].slice(0, 50);
+                    });
                 }
             };
         };
@@ -544,11 +551,14 @@ const App = () => {
                                     overflowY: 'auto',
                                     border: '1px solid #30363d'
                                 }}>
-                                    {logs.map((log, i) => (
-                                        <div key={i} style={{ marginBottom: '4px', color: log.includes('✅') || log.includes('🚀') ? '#3fb950' : log.includes('❌') ? '#f85149' : '#8b949e' }}>
-                                            {log}
-                                        </div>
-                                    ))}
+                                    {logs.map((log, i) => {
+                                        const text = typeof log === 'string' ? log : log.text;
+                                        return (
+                                            <div key={log.id || i} style={{ marginBottom: '4px', color: text.includes('✅') || text.includes('🚀') ? '#3fb950' : text.includes('❌') ? '#f85149' : '#8b949e' }}>
+                                                {text}
+                                            </div>
+                                        );
+                                    })}
                                 </div>
                             </section>
                         </>
