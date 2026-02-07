@@ -372,7 +372,7 @@ const App = () => {
                             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2rem' }}>
                                 <section className="card">
                                     <div className="card-title"><Zap size={18} className="blue" /> Manual Buy Order</div>
-                                    <div className="form-grid">
+                                    <div className="form-grid form-grid-compact">
                                         <div className="form-group">
                                             <label>Ticker</label>
                                             <input type="text" placeholder="e.g. AAPL" value={buyForm.ticker} onChange={e => setBuyForm({ ...buyForm, ticker: e.target.value.toUpperCase() })} />
@@ -391,7 +391,7 @@ const App = () => {
 
                                 <section className="card">
                                     <div className="card-title"><Activity size={18} className="blue" /> Breakout Manager</div>
-                                    <form className="form-grid" onSubmit={createStrategy}>
+                                    <form className="form-grid form-grid-compact" onSubmit={createStrategy}>
                                         <div className="form-group">
                                             <label>Ticker</label>
                                             <input type="text" value={stratForm.ticker} onChange={e => setStratForm({ ...stratForm, ticker: e.target.value.toUpperCase() })} required />
@@ -469,9 +469,9 @@ const App = () => {
                                                 <th>Type</th>
                                                 <th>Qty</th>
                                                 <th>Limit</th>
+                                                <th>Price</th>
                                                 <th>SL Qty</th>
                                                 <th>SL Val</th>
-                                                <th>Price</th>
                                                 <th>Status</th>
                                                 <th>Time</th>
                                                 <th>Cancel</th>
@@ -493,6 +493,7 @@ const App = () => {
                                                         <td className={typeGrey ? 'grey' : o.action === 'BUY' ? 'green' : 'red'}>{o.action} {o.type}</td>
                                                         <td className={typeGrey ? 'grey' : ''}>{o.total_qty}</td>
                                                         <td className={`mono ${typeGrey ? 'grey' : ''}`}>{o.price > 0 ? fmtUSD(o.price) : 'MKT'}</td>
+                                                        <td className={`mono ${isFilled && !slActive ? 'grey' : ''}`}>{fmtUSD(prices[o.ticker] || o.current_or_filled_price)}</td>
 
                                                         {/* Stop Loss Columns */}
                                                         <td className={slGrey ? 'grey' : o.attached_stop_action === 'SELL' ? 'red' : 'green'}>
@@ -501,8 +502,6 @@ const App = () => {
                                                         <td className={`mono ${slGrey ? 'grey' : o.attached_stop_action === 'SELL' ? 'red' : 'green'}`} style={{ fontWeight: 600 }}>
                                                             {o.attached_stop_price > 0 ? fmtUSD(o.attached_stop_price) : '-'}
                                                         </td>
-
-                                                        <td className={`mono ${isFilled && !slActive ? 'grey' : ''}`}>{fmtUSD(prices[o.ticker] || o.current_or_filled_price)}</td>
                                                         <td className={isFilled && !slActive ? 'grey' : ''}>{o.status}</td>
                                                         <td className={isFilled && !slActive ? 'grey' : ''} style={{ fontSize: '0.8rem' }}>{o.time}</td>
                                                         <td>
@@ -544,7 +543,7 @@ const App = () => {
                     {activeTab === 'historical' && (
                         <section className="card">
                             <div className="card-title">Download Historical Data</div>
-                            <div className="form-grid">
+                            <div className="form-grid form-grid-compact">
                                 <div className="form-group">
                                     <label>Ticker</label>
                                     <input type="text" value={historyForm.ticker} onChange={e => setHistoryForm({ ...historyForm, ticker: e.target.value.toUpperCase() })} />
