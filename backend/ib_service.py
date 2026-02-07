@@ -400,30 +400,39 @@ class IBIntegration:
 
     def force_delete_order(self, order_id):
         """Forcefully removes an order and its children from all local in-memory caches (Ghost Orders)"""
-        order_id = int(order_id)
-        
+        # Handle both int IDs and (clientId, orderId) tuples used by ib_insync wrapper
+        raw_key = order_id
+        try:
+            if isinstance(order_id, (tuple, list)) and len(order_id) >= 2:
+                display_id = int(order_id[1])
+            else:
+                display_id = int(order_id)
+        except (TypeError, ValueError, IndexError):
+            display_id = 0
+            
         # 1. Check if it's already gone to break recursion
-        if order_id not in self.ib.wrapper.trades:
+        if raw_key not in self.ib.wrapper.trades:
             return False
             
         # 2. Remove the parent FIRST to break cycles
-        del self.ib.wrapper.trades[order_id]
-        logger.info(f"Force deleted Ghost Order {order_id} from wrapper.trades")
+        del self.ib.wrapper.trades[raw_key]
+        logger.info(f"Force deleted Ghost Order {display_id} from wrapper.trades (Key: {raw_key})")
 
         # 3. Recursive cleanup for child orders (e.g. Stop Loss)
-        child_ids = []
+        child_keys = []
         try:
             # We use list(dict.items()) to safely iterate while items might be removed in recursion
             for tid, t in list(self.ib.wrapper.trades.items()):
                 p_id = getattr(t.order, 'parentId', 0)
-                if p_id == order_id and tid != order_id:
-                    child_ids.append(tid)
+                # Compare against the integer ID
+                if p_id == display_id and tid != raw_key:
+                    child_keys.append(tid)
         except Exception as e:
-            logger.warning(f"Error searching for child orders of {order_id}: {e}")
+            logger.warning(f"Error searching for child orders of {display_id}: {e}")
 
-        for cid in child_ids:
-            logger.info(f"Cascading force-delete to child order {cid} (Parent: {order_id})")
-            self.force_delete_order(cid)
+        for ck in child_keys:
+            logger.info(f"Cascading force-delete to child order {ck} (Parent: {display_id})")
+            self.force_delete_order(ck)
 
         return True
 

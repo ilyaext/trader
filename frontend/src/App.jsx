@@ -106,9 +106,11 @@ const App = () => {
         return () => ws.current?.close();
     }, []);
 
-    // Complex Logic: Process Orders (Merging Parent/Child)
-    const processedOrders = useMemo(() => {
-        if (!orders || !Array.isArray(orders) || orders.length === 0) return [];
+    // Complex Logic: Process Orders (Merging Parent/Child & Splitting)
+    const { workingOrders, completedOrders } = useMemo(() => {
+        if (!orders || !Array.isArray(orders) || orders.length === 0) {
+            return { workingOrders: [], completedOrders: [] };
+        }
 
         // Use map to create fresh objects to avoid state mutation
         const allOrders = orders.map(o => ({ ...o }));
@@ -129,17 +131,15 @@ const App = () => {
         const orphans = children.filter(c => !parentIds.includes(c.parent_id));
         const combined = [...parents, ...orphans];
 
-        const activeStatuses = ['Submitted', 'PreSubmitted', 'PendingSubmit', 'ApiPending', 'Simulated', 'Inactive']; // Inactive can stay at top if it might turn active, but user said Active (working)
-        // Let's stick to the "Actionable" ones
-        const priorityStatuses = ['Submitted', 'PreSubmitted', 'PendingSubmit', 'ApiPending', 'Simulated'];
+        const workingStates = ['Submitted', 'PreSubmitted', 'PendingSubmit', 'ApiPending', 'Simulated', 'PendingCancel'];
 
-        return combined.sort((a, b) => {
-            const aPrio = priorityStatuses.includes(a.status) ? 0 : (a.status === 'Filled' ? 1 : 2);
-            const bPrio = priorityStatuses.includes(b.status) ? 0 : (b.status === 'Filled' ? 1 : 2);
-            if (aPrio !== bPrio) return aPrio - bPrio;
-            // Newest first within same priority
-            return b.time.localeCompare(a.time);
-        });
+        const working = combined.filter(o => workingStates.includes(o.status))
+            .sort((a, b) => b.time.localeCompare(a.time));
+
+        const completed = combined.filter(o => !workingStates.includes(o.status))
+            .sort((a, b) => b.time.localeCompare(a.time));
+
+        return { workingOrders: working, completedOrders: completed };
     }, [orders]);
 
     // Actions
@@ -479,9 +479,9 @@ const App = () => {
                                 </div>
                             </section>
 
-                            {/* Orders Table - The 10 Column View */}
+                            {/* Working Orders Table */}
                             <section className="card">
-                                <div className="card-title">📦 Active Orders</div>
+                                <div className="card-title">📦 Working Orders</div>
                                 <div className="table-container">
                                     <table>
                                         <thead>
@@ -499,32 +499,27 @@ const App = () => {
                                             </tr>
                                         </thead>
                                         <tbody>
-                                            {processedOrders?.map(o => {
-                                                const isFilled = o.status === 'Filled';
+                                            {workingOrders?.length > 0 ? workingOrders.map(o => {
                                                 const slStatus = o.attached_stop_status || '';
                                                 const slActive = ['Submitted', 'PreSubmitted', 'PendingSubmit', 'ApiPending', 'Simulated'].includes(slStatus);
 
-                                                const tickerGrey = (isFilled && !slActive) || ['Cancelled', 'Inactive'].includes(o.status);
-                                                const typeGrey = isFilled || ['Cancelled', 'Inactive'].includes(o.status);
-                                                const slGrey = !slActive;
-
                                                 return (
                                                     <tr key={o.id}>
-                                                        <td className={`ticker-cell ${tickerGrey ? 'grey' : o.status === 'Simulated' ? 'blue' : 'orange'}`}>{o.ticker}</td>
-                                                        <td className={typeGrey ? 'grey' : o.action === 'BUY' ? 'green' : 'red'}>{o.action} {o.type}</td>
-                                                        <td className={typeGrey ? 'grey' : ''}>{o.total_qty}</td>
-                                                        <td className={`mono ${typeGrey ? 'grey' : ''}`}>{o.price > 0 ? fmtUSD(o.price) : 'MKT'}</td>
-                                                        <td className={`mono ${isFilled && !slActive ? 'grey' : ''}`}>{fmtUSD(prices[o.ticker] || o.current_or_filled_price)}</td>
+                                                        <td className={`ticker-cell ${o.status === 'Simulated' ? 'blue' : 'orange'}`}>{o.ticker}</td>
+                                                        <td className={o.action === 'BUY' ? 'green' : 'red'}>{o.action} {o.type}</td>
+                                                        <td>{o.total_qty}</td>
+                                                        <td className="mono">{o.price > 0 ? fmtUSD(o.price) : 'MKT'}</td>
+                                                        <td className="mono">{fmtUSD(prices[o.ticker] || o.current_or_filled_price)}</td>
 
                                                         {/* Stop Loss Columns */}
-                                                        <td className={slGrey ? 'grey' : o.attached_stop_action === 'SELL' ? 'red' : 'green'}>
+                                                        <td className={o.attached_stop_action === 'SELL' ? 'red' : 'green'}>
                                                             {o.attached_stop_price > 0 ? o.attached_stop_qty : '-'}
                                                         </td>
-                                                        <td className={`mono ${slGrey ? 'grey' : o.attached_stop_action === 'SELL' ? 'red' : 'green'}`} style={{ fontWeight: 600 }}>
+                                                        <td className={`mono ${o.attached_stop_action === 'SELL' ? 'red' : 'green'}`} style={{ fontWeight: 600 }}>
                                                             {o.attached_stop_price > 0 ? fmtUSD(o.attached_stop_price) : '-'}
                                                         </td>
-                                                        <td className={isFilled && !slActive ? 'grey' : ''}>{o.status}</td>
-                                                        <td className={isFilled && !slActive ? 'grey' : ''} style={{ fontSize: '0.8rem' }}>{o.time}</td>
+                                                        <td>{o.status}</td>
+                                                        <td style={{ fontSize: '0.8rem' }}>{o.time}</td>
                                                         <td>
                                                             {(o.status === 'Submitted' || o.status === 'PreSubmitted' || o.status === 'Simulated') ? (
                                                                 <button className="btn-icon" onClick={() => cancelOrder(o.id)}><Trash2 size={14} /></button>
@@ -532,7 +527,56 @@ const App = () => {
                                                         </td>
                                                     </tr>
                                                 );
-                                            })}
+                                            }) : (
+                                                <tr><td colSpan="10" style={{ textAlign: 'center', color: '#8b949e', padding: '1rem' }}>No active working orders.</td></tr>
+                                            )}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </section>
+
+                            {/* Order History Table */}
+                            <section className="card">
+                                <div className="card-title">🕰️ Order History</div>
+                                <div className="table-container">
+                                    <table>
+                                        <thead>
+                                            <tr>
+                                                <th>Ticker</th>
+                                                <th>Type</th>
+                                                <th>Qty</th>
+                                                <th>Limit</th>
+                                                <th>Price</th>
+                                                <th>SL Qty</th>
+                                                <th>SL Val</th>
+                                                <th>Status</th>
+                                                <th>Time</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {completedOrders?.length > 0 ? completedOrders.map(o => {
+                                                return (
+                                                    <tr key={o.id}>
+                                                        <td className="ticker-cell grey">{o.ticker}</td>
+                                                        <td className="grey">{o.action} {o.type}</td>
+                                                        <td className="grey">{o.total_qty}</td>
+                                                        <td className="mono grey">{o.price > 0 ? fmtUSD(o.price) : 'MKT'}</td>
+                                                        <td className="mono grey">{fmtUSD(o.current_or_filled_price)}</td>
+
+                                                        {/* Stop Loss Columns */}
+                                                        <td className="grey">
+                                                            {o.attached_stop_price > 0 ? o.attached_stop_qty : '-'}
+                                                        </td>
+                                                        <td className="mono grey" style={{ fontWeight: 600 }}>
+                                                            {o.attached_stop_price > 0 ? fmtUSD(o.attached_stop_price) : '-'}
+                                                        </td>
+                                                        <td className="grey">{o.status}</td>
+                                                        <td className="grey" style={{ fontSize: '0.8rem' }}>{o.time}</td>
+                                                    </tr>
+                                                );
+                                            }) : (
+                                                <tr><td colSpan="9" style={{ textAlign: 'center', color: '#8b949e', padding: '1rem' }}>No order history yet.</td></tr>
+                                            )}
                                         </tbody>
                                     </table>
                                 </div>
