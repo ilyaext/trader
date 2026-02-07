@@ -21,6 +21,8 @@ const App = () => {
     const [testPrice, setTestPrice] = useState(100);
     const [prices, setPrices] = useState({});
     const [wsConnected, setWsConnected] = useState(false);
+    const [config, setConfig] = useState({ target_investment: 3000, stop_loss_pct: 3.0 });
+    const [showingConfig, setShowingConfig] = useState(false);
 
     // Form states
     const [buyForm, setBuyForm] = useState({ ticker: '', qty: 1, sl: 0 });
@@ -44,7 +46,8 @@ const App = () => {
                 axios.get(`${API_BASE}/portfolio`),
                 axios.get(`${API_BASE}/orders`),
                 axios.get(`${API_BASE}/strategies`),
-                axios.get(`${API_BASE}/logs`)
+                axios.get(`${API_BASE}/logs`),
+                axios.get(`${API_BASE}/config`)
             ]);
             setHealth(hRes.data);
             setAccount(aRes.data);
@@ -52,6 +55,7 @@ const App = () => {
             setOrders(oRes.data);
             setStrategies(sRes.data);
             setLogs(lRes.data);
+            setConfig(cRes.data);
         } catch (err) {
             console.error("Fetch Error:", err);
         }
@@ -186,6 +190,21 @@ const App = () => {
         } catch (e) { alert(e.response?.data?.detail || "Failed to create strategy"); }
     };
 
+    const updateConfig = async (newConfig) => {
+        try {
+            await axios.post(`${API_BASE}/config`, newConfig);
+            setConfig(newConfig);
+            setShowingConfig(false);
+        } catch (e) { alert("Failed to update configuration"); }
+    };
+
+    const onEntryChange = (val) => {
+        const entry = Number(val);
+        const sl = entry * (1 - config.stop_loss_pct / 100);
+        const qty = Math.floor(config.target_investment / entry);
+        setStratForm({ ...stratForm, entry: val, sl: sl.toFixed(2), qty: qty || 1 });
+    };
+
     // UI Helpers
     const fmtUSD = (v) => {
         if (v === undefined || v === null || isNaN(v)) return '$0.00';
@@ -249,6 +268,34 @@ const App = () => {
                     </div>
                 </div>
 
+                <div className="sidebar-section">
+                    <div className="section-title">Settings</div>
+                    <button className="btn-secondary" style={{ width: '100%', justifyContent: 'flex-start', gap: '8px' }} onClick={() => setShowingConfig(!showingConfig)}>
+                        <RefreshCw size={14} /> Strat Config
+                    </button>
+                    {showingConfig && (
+                        <div className="config-box" style={{ marginTop: '10px', padding: '10px', background: '#1c2128', borderRadius: '6px', border: '1px solid #30363d' }}>
+                            <div className="form-group">
+                                <label style={{ fontSize: '0.7rem' }}>Default Risk ($)</label>
+                                <input type="number"
+                                    value={config.target_investment}
+                                    onChange={e => setConfig({ ...config, target_investment: Number(e.target.value) })}
+                                    style={{ padding: '4px', fontSize: '0.8rem' }}
+                                />
+                            </div>
+                            <div className="form-group">
+                                <label style={{ fontSize: '0.7rem' }}>Default SL (%)</label>
+                                <input type="number"
+                                    value={config.stop_loss_pct}
+                                    onChange={e => setConfig({ ...config, stop_loss_pct: Number(e.target.value) })}
+                                    style={{ padding: '4px', fontSize: '0.8rem' }}
+                                />
+                            </div>
+                            <button className="btn-primary" style={{ width: '100%', marginTop: '8px', padding: '4px' }} onClick={() => updateConfig(config)}>Save</button>
+                        </div>
+                    )}
+                </div>
+
                 <div className="sidebar-section mt-auto">
                     <div className="section-title">Test Lab</div>
                     <div className="form-group">
@@ -309,11 +356,9 @@ const App = () => {
                                                     <td className="mono">{fmtUSD(p.avg_cost)}</td>
                                                     <td className="mono">{p.stop_loss > 0 ? fmtUSD(p.stop_loss) : '-'}</td>
                                                     <td className="mono">{p.risk_amount !== 0 ? fmtUSD(p.risk_amount) : '-'}</td>
-                                                    <td>
-                                                        <button className="btn-icon" onClick={() => closePosition(p.ticker)}>
-                                                            <X size={16} />
-                                                        </button>
-                                                    </td>
+                                                    <button className="btn-icon" onClick={() => closePosition(p.ticker)}>
+                                                        <Trash2 size={14} />
+                                                    </button>
                                                 </tr>
                                             )) : (
                                                 <tr><td colSpan="9" style={{ textAlign: 'center', color: '#8b949e', padding: '2rem' }}>No open positions.</td></tr>
@@ -349,15 +394,19 @@ const App = () => {
                                     <form className="form-grid" onSubmit={createStrategy}>
                                         <div className="form-group">
                                             <label>Ticker</label>
-                                            <input type="text" value={stratForm.ticker} onChange={e => setStratForm({ ...stratForm, ticker: e.target.value })} required />
+                                            <input type="text" value={stratForm.ticker} onChange={e => setStratForm({ ...stratForm, ticker: e.target.value.toUpperCase() })} required />
                                         </div>
                                         <div className="form-group">
                                             <label>Entry Alert ($)</label>
-                                            <input type="number" value={stratForm.entry} onChange={e => setStratForm({ ...stratForm, entry: e.target.value })} step="0.01" required />
+                                            <input type="number" value={stratForm.entry} onChange={e => onEntryChange(e.target.value)} step="0.01" required />
                                         </div>
                                         <div className="form-group">
                                             <label>Stop Loss ($)</label>
                                             <input type="number" value={stratForm.sl} onChange={e => setStratForm({ ...stratForm, sl: e.target.value })} step="0.01" />
+                                        </div>
+                                        <div className="form-group">
+                                            <label>Quantity</label>
+                                            <input type="number" value={stratForm.qty} onChange={e => setStratForm({ ...stratForm, qty: e.target.value })} />
                                         </div>
                                         <button className="btn-primary" type="submit">Set Alert</button>
                                     </form>
@@ -458,7 +507,7 @@ const App = () => {
                                                         <td className={isFilled && !slActive ? 'grey' : ''} style={{ fontSize: '0.8rem' }}>{o.time}</td>
                                                         <td>
                                                             {(o.status === 'Submitted' || o.status === 'PreSubmitted' || o.status === 'Simulated') ? (
-                                                                <button className="btn-icon" onClick={() => cancelOrder(o.id)}><X size={14} /></button>
+                                                                <button className="btn-icon" onClick={() => cancelOrder(o.id)}><Trash2 size={14} /></button>
                                                             ) : null}
                                                         </td>
                                                     </tr>

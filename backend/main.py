@@ -21,6 +21,7 @@ nest_asyncio.apply()
 # CONFIGURATION
 BACKEND_URL = os.getenv("BACKEND_URL", "http://backend:8000")
 TARGET_INVESTMENT = float(os.getenv("TARGET_INVESTMENT", "3000.0"))
+STOP_LOSS_PCT = float(os.getenv("STOP_LOSS_PCT", "3.0"))
 
 # Global context
 strategies = []
@@ -177,6 +178,22 @@ async def check_connection_loop():
 @app.get("/health")
 async def health():
     return {"status": "ok", "ib_connected": ib_service.check_connection}
+
+@app.get("/config")
+async def get_config():
+    return {
+        "target_investment": TARGET_INVESTMENT,
+        "stop_loss_pct": STOP_LOSS_PCT
+    }
+
+@app.post("/config")
+async def update_config(req: dict):
+    global TARGET_INVESTMENT, STOP_LOSS_PCT
+    if "target_investment" in req:
+        TARGET_INVESTMENT = float(req["target_investment"])
+    if "stop_loss_pct" in req:
+        STOP_LOSS_PCT = float(req["stop_loss_pct"])
+    return {"status": "success", "config": {"target_investment": TARGET_INVESTMENT, "stop_loss_pct": STOP_LOSS_PCT}}
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
