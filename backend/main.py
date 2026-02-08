@@ -101,21 +101,32 @@ async def check_strategies(symbol, price, source="UNKNOWN"):
         # --- Part A: Check False Breakouts ---
         for s in triggered_for_ticker:
             if price < s.entry_price:
-                # BREAKOUT FAILED: Price dropped below original entry
-                log_strategy_event(f"🚨 FALSE BREAKOUT [{s.id}]: {symbol} at ${price:.2f} (< {s.entry_price:.2f}). Resetting...")
-                
-                # 1. Close the position & Cancel associated orders
-                try:
-                    await ib_service.close_position(symbol)
-                    log_strategy_event(f"🧹 Cleaned up {symbol} for [{s.id}]")
-                except Exception as e:
-                    print(f"DEBUG: [False Breakout Cleanup] Failed for {symbol}: {e}")
-                
-                # 2. Reset the strategy state
-                s.status = "active"
+                # POTENTIAL FALSE BREAKOUT: Price dropped below original entry
+                if s.last_seen_price is not None and price < s.last_seen_price:
+                    # CONFIRMED FALSE BREAKOUT: Two sequential falling updates below entry
+                    log_strategy_event(f"🚨 FALSE BREAKOUT [{s.id}]: {symbol} at ${price:.2f} (< {s.last_seen_price:.2f}). Resetting...")
+                    
+                    # 1. Close the position & Cancel associated orders
+                    try:
+                        await ib_service.close_position(symbol)
+                        log_strategy_event(f"🧹 Cleaned up {symbol} for [{s.id}]")
+                    except Exception as e:
+                        print(f"DEBUG: [False Breakout Cleanup] Failed for {symbol}: {e}")
+                    
+                    # 2. Reset the strategy state
+                    s.status = "active"
+                    s.last_seen_price = None
+                    s.current_price = price
+                else:
+                    # First low or price didn't drop further, track it
+                    if s.last_seen_price is None:
+                        log_strategy_event(f"👀 Potential False Breakout [{s.id}]: {symbol} at ${price:.2f} (< {s.entry_price})")
+                    s.last_seen_price = price
+            else:
+                # Price is back above entry, clear potential false breakout tracking
+                if s.last_seen_price is not None:
+                    log_strategy_event(f"🛡️ Breakout Stable [{s.id}]: {symbol} at ${price:.2f} (>= {s.entry_price})")
                 s.last_seen_price = None
-                s.current_price = price
-                # Don't return, allow it to be processed as active if needed (unlikely in same tick)
 
         # --- Part B: Check New Breakouts ---
         if not active_for_ticker:
@@ -145,6 +156,7 @@ async def check_strategies(symbol, price, source="UNKNOWN"):
                 if price > s.last_seen_price:
                     log_strategy_event(f"🚀 BREAKOUT [{s.id}]: {symbol} at ${price:.2f} > ${s.last_seen_price:.2f} (Target: {s.entry_price})")
                     s.status = "triggered"
+                    s.last_seen_price = None  # Reset for False Breakout tracking
                     try:
                         await ib_service.place_order(
                             ticker_symbol=symbol,
