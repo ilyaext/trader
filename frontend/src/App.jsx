@@ -340,7 +340,7 @@ const App = () => {
                 <header className="tabs">
                     <div className={`tab ${activeTab === 'trading' ? 'active' : ''}`} onClick={() => setActiveTab('trading')}>Trading</div>
                     <div className={`tab ${activeTab === 'historical' ? 'active' : ''}`} onClick={() => setActiveTab('historical')}>Historical Data</div>
-                    <div className={`tab ${activeTab === 'agent' ? 'active' : ''}`} onClick={() => setActiveTab('agent')}>Strategy Agent</div>
+
                 </header>
 
                 <div className="tab-panel">
@@ -642,13 +642,7 @@ const App = () => {
                         </section>
                     )}
 
-                    {activeTab === 'agent' && (
-                        <div style={{ textAlign: 'center', padding: '5rem', color: '#8b949e' }}>
-                            <Activity size={48} style={{ marginBottom: '1rem', opacity: 0.5 }} />
-                            <h3>Strategy Agent Dashboard</h3>
-                            <p>Additional advanced analysis features coming soon.</p>
-                        </div>
-                    )}
+
                 </div>
             </main>
 
