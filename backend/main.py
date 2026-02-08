@@ -312,14 +312,29 @@ async def get_orders():
 
 @app.post("/order")
 async def place_order(req: dict):
+    ticker = req['ticker'].strip().upper()
     try:
-        res = await ib_service.place_order(
-            ticker_symbol=req['ticker'],
+        # 1. Check for existing positions
+        positions = ib_service.ib.positions()
+        if any(p.contract.symbol == ticker and p.position != 0 for p in positions):
+            raise HTTPException(status_code=400, detail=f"Existing position for {ticker} already found.")
+
+        # 2. Check for existing open orders
+        open_trades = ib_service.ib.openTrades()
+        if any(t.contract.symbol == ticker for t in open_trades):
+            raise HTTPException(status_code=400, detail=f"Existing open order for {ticker} already found.")
+
+        # 3. Place order
+        trade = await ib_service.place_order(
+            ticker_symbol=ticker,
             action=req['action'],
             quantity=req['quantity'],
             stop_loss_price=req.get('stop_loss')
         )
-        return {"status": "success", "order_id": res}
+        # Return only the order ID as an integer to prevent serialization errors
+        return {"status": "success", "order_id": int(trade.order.orderId)}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
