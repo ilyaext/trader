@@ -15,6 +15,15 @@ from datetime import datetime
 from models import Strategy, StrategyRequest, StrategyUpdate
 from collections import deque
 
+# Configure logging
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+logging.basicConfig(
+    level=getattr(logging, LOG_LEVEL),
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%H:%M:%S"
+)
+logger = logging.getLogger("TraderBot")
+
 # Apply nest_asyncio globally at the absolute start
 nest_asyncio.apply()
 
@@ -48,7 +57,7 @@ class ConnectionManager:
             try:
                 await connection.send_text(json.dumps(message))
             except Exception as e:
-                print(f"⚠️ [WS ERROR] Connection stale, pruning: {e}", flush=True)
+                logger.warning(f"⚠️ [WS ERROR] Connection stale, pruning: {e}")
                 to_remove.append(connection)
         
         for conn in to_remove:
@@ -76,7 +85,7 @@ def log_strategy_event(msg: str):
     
     # TRACE: Number of connections we are broadcasting to
     conn_count = len(manager.active_connections)
-    print(f"DEBUG: [CORE LOG] {formatted} (ID: {log_entry['id']}, Clients: {conn_count})")
+    logger.debug(f"[CORE LOG] {formatted} (ID: {log_entry['id']}, Clients: {conn_count})")
     
     asyncio.create_task(manager.broadcast({
         "type": "log", 
@@ -96,7 +105,7 @@ async def check_strategies(symbol, price, source="UNKNOWN"):
         triggered_for_ticker = [s for s in strategies if s.ticker.upper() == symbol and s.status == "triggered"]
         
         # DEBUG: Trace the specific call
-        print(f"DEBUG: [check_strategies] Tick {symbol} @ {price} | Source: {source} | Active: {len(active_for_ticker)} | Triggered: {len(triggered_for_ticker)}")
+        logger.debug(f"[check_strategies] Tick {symbol} @ {price} | Source: {source} | Active: {len(active_for_ticker)} | Triggered: {len(triggered_for_ticker)}")
 
         # --- Part A: Check False Breakouts ---
         for s in triggered_for_ticker:
@@ -111,7 +120,7 @@ async def check_strategies(symbol, price, source="UNKNOWN"):
                         await ib_service.close_position(symbol)
                         log_strategy_event(f"🧹 Cleaned up {symbol} for [{s.id}]")
                     except Exception as e:
-                        print(f"DEBUG: [False Breakout Cleanup] Failed for {symbol}: {e}")
+                        logger.error(f"[False Breakout Cleanup] Failed for {symbol}: {e}")
                     
                     # 2. Reset the strategy state
                     s.status = "active"
@@ -217,7 +226,7 @@ async def on_position_update(account, contract, position, avgCost):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Setup
-    print("🚀 [BACKEND] Starting Lifespan...")
+    logger.info("🚀 [BACKEND] Starting Lifespan...")
     init_db()
     
     # Register Callbacks
@@ -240,39 +249,39 @@ app = FastAPI(title="Trader Bot API", lifespan=lifespan)
 async def check_connection_loop():
     """Background task to maintain IBKR connection and sync order state"""
     sync_counter = 0
-    print("🚀 [SENTINEL] Background loop started", flush=True)
+    logger.info("🚀 [SENTINEL] Background loop started")
     while True:
         try:
             # 1. Check Connectivity
             is_valid = await ib_service.validate_connection()
             
             if not is_valid:
-                print("⚠️ [SENTINEL] Connection check failed. Attempting Reconnect...", flush=True)
+                logger.warning("⚠️ [SENTINEL] Connection check failed. Attempting Reconnect...")
                 await ib_service.force_disconnect()
                 await ib_service.connect()
                 
                 if ib_service.ib.isConnected():
-                    print("✅ [SENTINEL] Reconnected successfully", flush=True)
+                    logger.info("✅ [SENTINEL] Reconnected successfully")
                     # Restore market data for active monitor list
                     async with strategy_lock:
                         for s in strategies:
                             if s.status == "active":
                                 await ib_service.subscribe_market_data(s.ticker)
                 else:
-                    print("❌ [SENTINEL] Reconnection attempt failed", flush=True)
+                    logger.error("❌ [SENTINEL] Reconnection attempt failed")
             else:
                 # 2. Periodic State Sync (Every 30s)
                 sync_counter += 1
                 if sync_counter >= 6:
-                    print("🔄 [SENTINEL] Syncing state (Positions/Orders)", flush=True)
+                    logger.info("🔄 [SENTINEL] Syncing state (Positions/Orders)")
                     sync_counter = 0 
                     await ib_service.sync_open_orders()
                     ib_service.ib.reqPositions()
                         
         except Exception as e:
             import traceback
-            print(f"📡 [SENTINEL ERROR] Loop clash: {e}", flush=True)
-            print(traceback.format_exc(), flush=True)
+            logger.error(f"📡 [SENTINEL ERROR] Loop clash: {e}")
+            logger.error(traceback.format_exc())
             sync_counter = 0 
         
         await asyncio.sleep(5)

@@ -51,12 +51,12 @@ class IBIntegration:
 
     def on_error(self, reqId, errorCode, errorString, contract):
         """Handle IBKR API errors"""
-        # Diagnostic print for ALL errors
-        print(f"DEBUG: [on_error] reqId={reqId}, code={errorCode}, msg={errorString}", flush=True)
+        # Diagnostic log for ALL errors
+        logger.debug(f"[on_error] reqId={reqId}, code={errorCode}, msg={errorString}")
 
         # 1100=Connectivity lost, 10197=Competing Session, 2110=Connectivity broken, 504=Not connected
         if errorCode in [1100, 10197, 2110, 504]:
-            print(f"🚨 [on_error] CRITICAL ERROR {errorCode}. Force disconnecting.", flush=True)
+            logger.critical(f"🚨 [on_error] CRITICAL ERROR {errorCode}. Force disconnecting.")
             # Ensure we are considered disconnected
             asyncio.create_task(self.force_disconnect())
 
@@ -67,7 +67,7 @@ class IBIntegration:
             asyncio.create_task(cb(trade))
 
     def on_disconnected(self):
-        print("⛔ IBKR DISCONNECTED!")
+        logger.info("⛔ IBKR DISCONNECTED!")
 
     async def force_disconnect(self):
         """Forcefully disconnect and reset state"""
@@ -154,12 +154,12 @@ class IBIntegration:
     async def sync_open_orders(self):
         """Asynchronously pull all open orders (including TWS ones)"""
         if self.ib.isConnected():
-             print("🔄 Syncing Open Orders with IBKR...", flush=True)
+             logger.info("🔄 Syncing Open Orders with IBKR...")
              try:
                  # Use Async variant to prevent 'loop already running' errors
                  await self.ib.reqAllOpenOrdersAsync()
              except Exception as e:
-                 print(f"Failed to sync orders: {e}")
+                 logger.error(f"Failed to sync orders: {e}")
 
     def register_order_callback(self, cb):
         self.order_callbacks.append(cb)
@@ -216,7 +216,7 @@ class IBIntegration:
                 await self.ib.qualifyContractsAsync(c)
                 if c.conId != 0: return c
         except Exception as e:
-            print(f"DEBUG: reqContractDetails failed for {ticker_symbol}: {e}")
+            logger.debug(f"reqContractDetails failed for {ticker_symbol}: {e}")
             
         return c # Return the failed contract (conId=0)
 
@@ -230,7 +230,7 @@ class IBIntegration:
         contract = await self.robust_qualify_contract(ticker_symbol)
         
         if contract.conId == 0:
-            print(f"Contract validation failed (conId=0): {ticker_symbol}")
+            logger.warning(f"Contract validation failed (conId=0): {ticker_symbol}")
             return None
         
         # Switch to configured Market Data Type
@@ -264,7 +264,7 @@ class IBIntegration:
 
         # 4. FINAL FALLBACK: Request Historical Data (Last 1 Day)
         # This is the most reliable way to get 'Friday Close' on a Saturday
-        print(f"DEBUG: Streaming failed. Requesting Historical Data for {ticker_symbol}...")
+        logger.debug(f"Streaming failed. Requesting Historical Data for {ticker_symbol}...")
         try:
             bars = await self.ib.reqHistoricalDataAsync(
                 contract,
@@ -276,10 +276,10 @@ class IBIntegration:
                 formatDate=1
             )
             if bars:
-                print(f"DEBUG: Historical Data Received: Close={bars[-1].close}")
+                logger.debug(f"Historical Data Received: Close={bars[-1].close}")
                 return bars[-1].close
         except Exception as e:
-            print(f"DEBUG: Historical Data failed: {e}")
+            logger.error(f"Historical Data failed: {e}")
             raise e
 
     async def place_order(self, ticker_symbol, action, quantity, order_type="MARKET", limit_price=0.0, stop_loss_price=None):
@@ -347,7 +347,7 @@ class IBIntegration:
                     break
             
             if not is_subscribed:
-                print(f"DEBUG: Auto-subscribing to {ticker_symbol} for order tracking")
+                logger.info(f"Auto-subscribing to {ticker_symbol} for order tracking")
                 self.ib.reqMktData(contract, '', False, False)
         
         return trades[0] # Return parent trade
@@ -355,7 +355,7 @@ class IBIntegration:
     def cancel_order(self, order_id):
         """Cancels an active order by ID"""
         try:
-            print(f"DEBUG: [cancel_order] Request for ID {order_id}", flush=True)
+            logger.debug(f"[cancel_order] Request for ID {order_id}")
             if not self.check_connection:
                 raise Exception("IBKR not connected")
                 
@@ -369,7 +369,7 @@ class IBIntegration:
                     break
             
             if target_trade:
-                print(f"DEBUG: [cancel_order] Found trade for {target_trade.contract.symbol}", flush=True)
+                logger.debug(f"[cancel_order] Found trade for {target_trade.contract.symbol}")
                 if target_trade.contract.symbol == "TEST":
                     logger.info(f"Purging TEST ghost order {order_id}")
                     self.force_delete_order(order_id)
@@ -395,7 +395,7 @@ class IBIntegration:
             else:
                 raise ValueError(f"Order {order_id} not found or already filled/cancelled")
         except Exception as e:
-            print(f"ERROR: [cancel_order] failed for {order_id}: {e}", flush=True)
+            logger.error(f"[cancel_order] failed for {order_id}: {e}")
             logger.error(f"Cancellation error: {e}", exc_info=True)
             raise e
 
@@ -460,7 +460,7 @@ class IBIntegration:
         duration_days = delta.days + 1
         duration_str = f"{duration_days} D"
         
-        print(f"DEBUG: Requesting History for {ticker_symbol}: End={end_str}, Duration={duration_str}, Bar={bar_size}")
+        logger.info(f"Requesting History for {ticker_symbol}: End={end_str}, Duration={duration_str}, Bar={bar_size}")
         
         bars = await self.ib.reqHistoricalDataAsync(
             contract,
@@ -566,7 +566,7 @@ class IBIntegration:
         else:
             for trade in self.ib.openTrades():
                 if trade.contract.symbol == ticker_symbol:
-                    print(f"🧹 [Cleanup] Cancelling open order for {ticker_symbol}: {trade.order.orderType} {trade.order.action}", flush=True)
+                    logger.info(f"🧹 [Cleanup] Cancelling open order for {ticker_symbol}: {trade.order.orderType} {trade.order.action}")
                     self.ib.cancelOrder(trade.order)
                     # Small sleep to allow TWS to process the cancellation
                     await asyncio.sleep(0.5)
@@ -587,7 +587,7 @@ class IBIntegration:
         action = "SELL" if target_pos.position > 0 else "BUY"
         quantity = abs(target_pos.position)
         
-        print(f"🔄 CLOSING POSITION: {ticker_symbol} ({quantity} shares)", flush=True)
+        logger.info(f"🔄 CLOSING POSITION: {ticker_symbol} ({quantity} shares)")
         contract = target_pos.contract
         order = MarketOrder(action, quantity)
         trade = self.ib.placeOrder(contract, order)
