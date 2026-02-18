@@ -200,6 +200,13 @@ async def check_strategies(symbol, price, source="UNKNOWN"):
                 s.last_seen_price = price
         
         s.current_price = price
+        
+        # Calculate Daily % if not already set by on_price_update
+        if not s.daily_change_pct:
+            for ticker_obj in ib_service.ib.tickers():
+                if ticker_obj.contract.symbol == symbol and ticker_obj.close:
+                    s.daily_change_pct = (price - ticker_obj.close) / ticker_obj.close * 100
+                    break
 
 async def on_price_update(ticker):
     """Callback for real-time price updates"""
@@ -211,12 +218,26 @@ async def on_price_update(ticker):
 
     price = ticker.marketPrice() or ticker.last or ticker.close
     if price and price > 0:
+        # Calculate Daily %
+        daily_change_pct = 0.0
+        if ticker.close and ticker.close > 0:
+            daily_change_pct = (price - ticker.close) / ticker.close * 100
+
         # Avoid spamming logs for price updates unless debugging core flow
         asyncio.create_task(manager.broadcast({
             "type": "price",
             "ticker": symbol,
-            "price": price
+            "price": price,
+            "daily_change_pct": daily_change_pct
         }))
+        
+        # Update in-memory strategy objects Daily % BEFORE checking triggers
+        async with strategy_lock:
+            for s in strategies:
+                if s.ticker.upper() == symbol:
+                    s.current_price = price
+                    s.daily_change_pct = daily_change_pct
+
         await check_strategies(symbol, price, source="LIVE_TICK")
 
 async def on_order_update(trade):

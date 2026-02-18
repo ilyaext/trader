@@ -86,7 +86,13 @@ const App = () => {
             ws.current.onmessage = (event) => {
                 const msg = JSON.parse(event.data);
                 if (msg.type === 'price') {
-                    setPrices(prev => ({ ...prev, [msg.ticker]: msg.price }));
+                    setPrices(prev => ({
+                        ...prev,
+                        [msg.ticker]: {
+                            price: msg.price,
+                            pct: msg.daily_change_pct
+                        }
+                    }));
                 } else if (msg.type === 'order_update' || msg.type === 'position_update') {
                     // Trigger a full re-fetch to update orders, portfolio, and account
                     fetchAll();
@@ -356,7 +362,7 @@ const App = () => {
                                         <thead>
                                             <tr>
                                                 <th>Ticker</th>
-                                                <th>CHG %</th>
+                                                <th>Daily %</th>
                                                 <th>P/L $</th>
                                                 <th>Cur. Price</th>
                                                 <th>Qty</th>
@@ -370,9 +376,9 @@ const App = () => {
                                             {portfolio?.length > 0 ? portfolio.map(p => (
                                                 <tr key={p.ticker}>
                                                     <td className="ticker-cell">{p.ticker}</td>
-                                                    <td className={p.today_pnl_pct >= 0 ? 'green' : 'red'}>{fmtPct(p.today_pnl_pct)}</td>
+                                                    <td className={(prices[p.ticker]?.pct || p.today_pnl_pct) >= 0 ? 'green' : 'red'}>{fmtPct(prices[p.ticker]?.pct || p.today_pnl_pct)}</td>
                                                     <td className={`${p.today_pnl >= 0 ? 'green' : 'red'} mono`}>{fmtUSD(p.today_pnl)}</td>
-                                                    <td className="mono">{fmtUSD(prices[p.ticker] || p.market_price)}</td>
+                                                    <td className="mono">{fmtUSD(prices[p.ticker]?.price || p.market_price)}</td>
                                                     <td>{p.quantity}</td>
                                                     <td className="mono">{fmtUSD(p.avg_cost)}</td>
                                                     <td className="mono">{p.stop_loss > 0 ? fmtUSD(p.stop_loss) : '-'}</td>
@@ -444,9 +450,9 @@ const App = () => {
                                         <thead>
                                             <tr>
                                                 <th>Ticker</th>
+                                                <th>Daily %</th>
                                                 <th>Mode</th>
                                                 <th>Price</th>
-                                                <th>Daily %</th>
                                                 <th>Entry Alert</th>
                                                 <th>Stop Loss</th>
                                                 <th>Qty</th>
@@ -457,6 +463,7 @@ const App = () => {
                                             {strategies.filter(s => s.status === 'active').map(s => (
                                                 <tr key={s.id}>
                                                     <td className="ticker-cell">{s.ticker}</td>
+                                                    <td className={(prices[s.ticker]?.pct || s.daily_change_pct) >= 0 ? 'green' : 'red'}>{s.daily_change_pct || prices[s.ticker]?.pct ? fmtPct(prices[s.ticker]?.pct || s.daily_change_pct) : '-'}</td>
                                                     <td>
                                                         <button
                                                             className={`btn-icon ${s.is_live ? 'blue' : 'orange'}`}
@@ -466,8 +473,7 @@ const App = () => {
                                                             {s.is_live ? <Zap size={14} /> : <Monitor size={14} />}
                                                         </button>
                                                     </td>
-                                                    <td className="mono">{fmtUSD(prices[s.ticker] || s.current_price)}</td>
-                                                    <td className={s.daily_change_pct >= 0 ? 'green' : 'red'}>{s.daily_change_pct ? fmtPct(s.daily_change_pct) : '-'}</td>
+                                                    <td className="mono">{fmtUSD(prices[s.ticker]?.price || s.current_price)}</td>
                                                     <td className="mono">{fmtUSD(s.entry_price)}</td>
                                                     <td className="mono">{s.stop_loss ? fmtUSD(s.stop_loss) : '-'}</td>
                                                     <td>{s.quantity}</td>
@@ -511,7 +517,7 @@ const App = () => {
                                                         <td className={o.action === 'BUY' ? 'green' : 'red'}>{o.action} {o.type}</td>
                                                         <td>{o.total_qty}</td>
                                                         <td className="mono">{o.price > 0 ? fmtUSD(o.price) : 'MKT'}</td>
-                                                        <td className="mono">{fmtUSD(prices[o.ticker] || o.current_or_filled_price)}</td>
+                                                        <td className="mono">{fmtUSD(prices[o.ticker]?.price || o.current_or_filled_price)}</td>
 
                                                         {/* Stop Loss Columns */}
                                                         <td className={o.attached_stop_action === 'SELL' ? 'red' : 'green'}>
