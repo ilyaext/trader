@@ -604,10 +604,26 @@ class IBIntegration:
         action = "SELL" if target_pos.position > 0 else "BUY"
         quantity = abs(target_pos.position)
         
-        logger.info(f"🔄 CLOSING POSITION: {ticker_symbol} ({quantity} shares)")
-        contract = target_pos.contract
+        # 3. Always use a SMART-qualified contract for closing to avoid Direct Routing Precautions (Error 10311)
+        contract = await self.robust_qualify_contract(ticker_symbol)
+
+        if not contract or contract.conId == 0:
+             # Last ditch fallback: use the contract from the position if qualification failed
+             logger.warning(f"Contract qualification failed for {ticker_symbol}, falling back to position contract data.")
+             contract = target_pos.contract
+
+        if not contract or contract.conId == 0:
+             raise ValueError(f"Failed to identify a valid contract for {ticker_symbol} for closing")
+
+        # Use MarketOrder with robust flags
         order = MarketOrder(action, quantity)
+        # Enable outsideRth to allow pre/post market closing
+        # And overridePercentageConstraints to bypass TWS precautionary checks
+        order.outsideRth = True
+        order.overridePercentageConstraints = True
+        
         trade = self.ib.placeOrder(contract, order)
+        
         return trade
 
 
