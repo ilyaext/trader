@@ -575,14 +575,31 @@ class IBIntegration:
         if is_test:
              # For TEST, we skip the actual market order and just return success (orders are purged above)
              logger.info(f"✅ Mock CLOSED TEST position for {ticker_symbol}")
-             return None
+             return True
 
-        positions = self.ib.positions()
-        target_pos = next((p for p in positions if p.contract.symbol == ticker_symbol), None)
+        # Search in BOTH positions() and portfolio() for maximum robustness
+        target_pos = None
+        
+        # Try positions() first (official IB account positions)
+        all_positions = self.ib.positions()
+        target_pos = next((p for p in all_positions if p.contract.symbol == ticker_symbol), None)
         
         if not target_pos or target_pos.position == 0:
-            logger.warning(f"No active position for {ticker_symbol} to close.")
-            return None
+            logger.info(f"🔍 {ticker_symbol} not found in ib.positions(), checking ib.portfolio()...")
+            # Try portfolio() as fallback (what the UI usually sees)
+            all_portfolio = self.ib.portfolio()
+            target_item = next((item for item in all_portfolio if item.contract.symbol == ticker_symbol), None)
+            if target_item and target_item.position != 0:
+                logger.info(f"✅ Found {ticker_symbol} in ib.portfolio()")
+                # Synthetic target_pos for MarketOrder logic
+                class MockPos: pass
+                target_pos = MockPos()
+                target_pos.contract = target_item.contract
+                target_pos.position = target_item.position
+
+        if not target_pos or target_pos.position == 0:
+            logger.warning(f"❌ No active position for {ticker_symbol} found in any cache.")
+            raise ValueError(f"No active position found for {ticker_symbol}")
             
         action = "SELL" if target_pos.position > 0 else "BUY"
         quantity = abs(target_pos.position)

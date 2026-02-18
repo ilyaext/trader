@@ -3,7 +3,7 @@ import asyncio
 from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 from contextlib import asynccontextmanager
-from database import init_db, get_db, Trade
+from database import init_db, get_db, Trade, StrategyModel, SessionLocal
 from sqlalchemy.orm import Session
 from ib_service import get_ib_service as live_get_ib_service
 import os
@@ -93,6 +93,18 @@ def log_strategy_event(msg: str):
         "log_id": log_entry['id']
     }))
 
+def update_db_strategy_status(s_id: str, status: str):
+    """Helper to update strategy status in DB in a background thread"""
+    db = SessionLocal()
+    try:
+        db.query(StrategyModel).filter(StrategyModel.id == s_id).update({"status": status})
+        db.commit()
+        logger.debug(f"🗄️ [DB SYNC] Updated strategy {s_id} status to {status}")
+    except Exception as e:
+        logger.error(f"❌ [DB SYNC] Failed to update strategy {s_id}: {e}")
+    finally:
+        db.close()
+
 async def check_strategies(symbol, price, source="UNKNOWN"):
     # Normalize input
     symbol = symbol.strip().upper()
@@ -124,6 +136,7 @@ async def check_strategies(symbol, price, source="UNKNOWN"):
                     
                     # 2. Reset the strategy state
                     s.status = "active"
+                    update_db_strategy_status(s.id, "active")
                     s.last_seen_price = None
                     s.current_price = price
                 else:
@@ -165,6 +178,7 @@ async def check_strategies(symbol, price, source="UNKNOWN"):
                 if price > s.last_seen_price:
                     log_strategy_event(f"🚀 BREAKOUT [{s.id}]: {symbol} at ${price:.2f} > ${s.last_seen_price:.2f} (Target: {s.entry_price})")
                     s.status = "triggered"
+                    update_db_strategy_status(s.id, "triggered")
                     s.last_seen_price = None  # Reset for False Breakout tracking
                     try:
                         await ib_service.place_order(
@@ -228,6 +242,36 @@ async def lifespan(app: FastAPI):
     # Setup
     logger.info("🚀 [BACKEND] Starting Lifespan...")
     init_db()
+    
+    # LOAD PERSISTENT STRATEGIES
+    async with strategy_lock:
+        db = SessionLocal()
+        try:
+            # 1. Cleanup old strategies (End of Day logic)
+            today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+            deleted_count = db.query(StrategyModel).filter(StrategyModel.created_at < today_start).delete()
+            db.commit()
+            if deleted_count > 0:
+                logger.info(f"🧹 [PERSISTENCE] Cleaned up {deleted_count} expired strategies from previous days")
+
+            # 2. Load active/triggered strategies
+            db_strategies = db.query(StrategyModel).filter(StrategyModel.status.in_(["active", "triggered"])).all()
+            for ds in db_strategies:
+                s = Strategy(
+                    id=ds.id,
+                    ticker=ds.ticker,
+                    entry_price=ds.entry_price,
+                    stop_loss=ds.stop_loss,
+                    quantity=ds.quantity,
+                    status=ds.status,
+                    created_at=ds.created_at.isoformat()
+                )
+                strategies.append(s)
+                # Subscribe to market data for loaded strategies
+                await ib_service.subscribe_market_data(s.ticker)
+                logger.info(f"📋 [PERSISTENCE] Restored strategy: {s.ticker} [{s.id}]")
+        finally:
+            db.close()
     
     # Register Callbacks
     ib_service.price_callbacks = [] # Clear old ones if re-running
@@ -373,10 +417,39 @@ async def purge_order(order_id: int):
 
 @app.post("/positions/close")
 async def close_position(ticker: str):
+    ticker = ticker.strip().upper()
     try:
+        # 1. Close Position in IBKR
         await ib_service.close_position(ticker)
-        return {"status": "closed"}
+        
+        # 2. Cleanup Associated Strategies (Active or Triggered)
+        async with strategy_lock:
+            global strategies
+            # Find IDs to delete from DB
+            to_delete_ids = [s.id for s in strategies if s.ticker.upper() == ticker]
+            
+            if to_delete_ids:
+                # Remove from memory
+                strategies = [s for s in strategies if s.ticker.upper() != ticker]
+                
+                # Remove from DB
+                db = SessionLocal()
+                try:
+                    db.query(StrategyModel).filter(StrategyModel.id.in_(to_delete_ids)).delete(synchronize_session=False)
+                    db.commit()
+                    log_strategy_event(f"🧹 Auto-deleted {len(to_delete_ids)} strategies for {ticker} (Position Closed)")
+                except Exception as db_e:
+                    logger.error(f"❌ [DB] Failed to cleanup strategies for {ticker}: {db_e}")
+                finally:
+                    db.close()
+
+        return {"status": "success", "message": f"Closed position and cleaned up strategies for {ticker}"}
+    except ValueError as e:
+        # Position not found
+        logger.warning(f"⚠️ [API] Close failed: {e}")
+        raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
+        logger.error(f"❌ [API] Error closing {ticker}: {e}")
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.get("/strategies")
@@ -404,6 +477,22 @@ async def create_strategy(req: StrategyRequest):
             created_at=datetime.now().isoformat()
         )
         strategies.append(s)
+        
+        # Save to DB
+        db = SessionLocal()
+        try:
+            db_s = StrategyModel(
+                id=s.id,
+                ticker=s.ticker,
+                entry_price=s.entry_price,
+                stop_loss=s.stop_loss,
+                quantity=s.quantity,
+                status=s.status
+            )
+            db.add(db_s)
+            db.commit()
+        finally:
+            db.close()
     
     await ib_service.subscribe_market_data(ticker)
     log_strategy_event(f"🎯 Strategy Set: {ticker} at ${req.entry_price} [ID: {s.id}]")
@@ -414,6 +503,14 @@ async def delete_strategy(strategy_id: str):
     async with strategy_lock:
         global strategies
         strategies = [s for s in strategies if s.id != strategy_id]
+        
+        # Update/Delete in DB
+        db = SessionLocal()
+        try:
+            db.query(StrategyModel).filter(StrategyModel.id == strategy_id).delete()
+            db.commit()
+        finally:
+            db.close()
     return {"status": "deleted"}
 
 @app.patch("/strategies/{id}")

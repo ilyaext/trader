@@ -22,6 +22,17 @@ class Trade(Base):
     timestamp = Column(DateTime, default=datetime.datetime.utcnow)
     ib_order_id = Column(Integer)
 
+class StrategyModel(Base):
+    __tablename__ = "strategies"
+
+    id = Column(String, primary_key=True, index=True)
+    ticker = Column(String, index=True)
+    entry_price = Column(Float)
+    stop_loss = Column(Float, nullable=True)
+    quantity = Column(Integer)
+    status = Column(String) # active, triggered, executed, cancelled
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
 def init_db():
     try:
         Base.metadata.create_all(bind=engine)
