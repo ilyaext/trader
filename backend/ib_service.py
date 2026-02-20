@@ -328,6 +328,7 @@ class IBIntegration:
             stop_action = "SELL" if action == "BUY" else "BUY"
             # Enable outsideRth=True to ensure the stop order is accepted during pre/post market
             child = StopOrder(stop_action, quantity, stop_loss_price, outsideRth=True)
+            child.tif = 'GTC'
             child.parentId = parent.orderId
             child.transmit = True # Transmit the whole bracket
             orders_to_place.append(child)
