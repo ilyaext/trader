@@ -31,6 +31,7 @@ nest_asyncio.apply()
 BACKEND_URL = os.getenv("BACKEND_URL", "http://backend:8000")
 TARGET_INVESTMENT = float(os.getenv("TARGET_INVESTMENT", "3000.0"))
 STOP_LOSS_PCT = float(os.getenv("STOP_LOSS_PCT", "3.0"))
+MAX_BREAKOUT_OFFSET_PCT = float(os.getenv("MAX_BREAKOUT_OFFSET_PCT", "3.0"))
 
 # Global context
 strategies = []
@@ -180,6 +181,15 @@ async def check_strategies(symbol, price, source="UNKNOWN"):
                     s.status = "triggered"
                     update_db_strategy_status(s.id, "triggered")
                     s.last_seen_price = None  # Reset for False Breakout tracking
+                    
+                    # Safety Check: Don't chase if price jumped > X% from entry
+                    max_allowed = s.entry_price * (1 + MAX_BREAKOUT_OFFSET_PCT / 100.0)
+                    if price > max_allowed:
+                        log_strategy_event(f"⚠️ Breakout Skipped [{s.id}]: Price too high (${price:.2f} > {MAX_BREAKOUT_OFFSET_PCT}% above entry ${s.entry_price:.2f})")
+                        s.status = "active" # Reset status inside lock
+                        update_db_strategy_status(s.id, "active")
+                        return
+
                     try:
                         await ib_service.place_order(
                             ticker_symbol=symbol,
@@ -378,17 +388,24 @@ async def health():
 async def get_config():
     return {
         "target_investment": TARGET_INVESTMENT,
-        "stop_loss_pct": STOP_LOSS_PCT
+        "stop_loss_pct": STOP_LOSS_PCT,
+        "max_breakout_offset_pct": MAX_BREAKOUT_OFFSET_PCT
     }
 
 @app.post("/config")
 async def update_config(req: dict):
-    global TARGET_INVESTMENT, STOP_LOSS_PCT
+    global TARGET_INVESTMENT, STOP_LOSS_PCT, MAX_BREAKOUT_OFFSET_PCT
     if "target_investment" in req:
         TARGET_INVESTMENT = float(req["target_investment"])
     if "stop_loss_pct" in req:
         STOP_LOSS_PCT = float(req["stop_loss_pct"])
-    return {"status": "success", "config": {"target_investment": TARGET_INVESTMENT, "stop_loss_pct": STOP_LOSS_PCT}}
+    if "max_breakout_offset_pct" in req:
+        MAX_BREAKOUT_OFFSET_PCT = float(req["max_breakout_offset_pct"])
+    return {"status": "success", "config": {
+        "target_investment": TARGET_INVESTMENT, 
+        "stop_loss_pct": STOP_LOSS_PCT,
+        "max_breakout_offset_pct": MAX_BREAKOUT_OFFSET_PCT
+    }}
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):

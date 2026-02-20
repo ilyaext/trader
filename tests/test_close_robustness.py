@@ -4,8 +4,9 @@ from unittest.mock import MagicMock, AsyncMock, patch
 import asyncio
 import traceback
 
-# Add backend to path
-sys.path.append('backend')
+# Add backend to path relative to this script
+os_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'backend'))
+sys.path.append(os_path)
 
 # Create a dummy module for ib_insync
 class MockIBInsync:
