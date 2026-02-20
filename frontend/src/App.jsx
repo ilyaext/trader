@@ -363,10 +363,12 @@ const App = () => {
                                             <tr>
                                                 <th>Ticker</th>
                                                 <th>Daily %</th>
-                                                <th>P/L $</th>
+                                                <th>Daily $</th>
                                                 <th>Cur. Price</th>
                                                 <th>Qty</th>
                                                 <th>Avg Price</th>
+                                                <th>Total %</th>
+                                                <th>Total $</th>
                                                 <th>Stop Price</th>
                                                 <th>Risk</th>
                                                 <th>Close</th>
@@ -376,11 +378,21 @@ const App = () => {
                                             {portfolio?.length > 0 ? portfolio.map(p => (
                                                 <tr key={p.ticker}>
                                                     <td className="ticker-cell">{p.ticker}</td>
-                                                    <td className={(prices[p.ticker]?.pct || p.today_pnl_pct) >= 0 ? 'green' : 'red'}>{fmtPct(prices[p.ticker]?.pct || p.today_pnl_pct)}</td>
-                                                    <td className={`${p.today_pnl >= 0 ? 'green' : 'red'} mono`}>{fmtUSD(p.today_pnl)}</td>
+                                                    <td className={`mono ${(prices[p.ticker]?.pct || p.today_pnl_pct) >= 0 ? 'green' : 'red'}`}>
+                                                        {fmtPct(prices[p.ticker]?.pct || p.today_pnl_pct)}
+                                                    </td>
+                                                    <td className={`mono ${p.today_pnl >= 0 ? 'green' : 'red'}`}>
+                                                        {fmtUSD(p.today_pnl)}
+                                                    </td>
                                                     <td className="mono">{fmtUSD(prices[p.ticker]?.price || p.market_price)}</td>
                                                     <td>{p.quantity}</td>
                                                     <td className="mono">{fmtUSD(p.avg_cost)}</td>
+                                                    <td className={`mono ${p.unrealized_pnl_pct >= 0 ? 'green' : 'red'}`}>
+                                                        {fmtPct(p.unrealized_pnl_pct)}
+                                                    </td>
+                                                    <td className={`mono ${p.unrealized_pnl >= 0 ? 'green' : 'red'}`}>
+                                                        {fmtUSD(p.unrealized_pnl)}
+                                                    </td>
                                                     <td className="mono">{p.stop_loss > 0 ? fmtUSD(p.stop_loss) : '-'}</td>
                                                     <td className="mono">{p.risk_amount !== 0 ? fmtUSD(p.risk_amount) : '-'}</td>
                                                     <td style={{ textAlign: 'right' }}>

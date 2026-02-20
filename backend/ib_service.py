@@ -786,8 +786,10 @@ class IBIntegration:
             # Recalculate Unrealized P&L based on new Current Price
             # IBKR's item.unrealizedPNL might be stale if item.marketPrice is stale
             unrealized_pnl = item.unrealizedPNL
+            unrealized_pnl_pct = 0.0
             if current_price > 0 and item.averageCost > 0:
                  unrealized_pnl = (current_price - item.averageCost) * item.position
+                 unrealized_pnl_pct = (current_price - item.averageCost) / item.averageCost * 100
             
             portfolio_items.append({
                 "ticker": item.contract.symbol,
@@ -796,6 +798,7 @@ class IBIntegration:
                 "market_price": current_price,
                 "market_value": current_price * item.position, # Recalc market value
                 "unrealized_pnl": unrealized_pnl,
+                "unrealized_pnl_pct": unrealized_pnl_pct,
                 "realized_pnl": item.realizedPNL,
                 "today_pnl": today_pnl,
                 "today_pnl_pct": today_pnl_pct,
