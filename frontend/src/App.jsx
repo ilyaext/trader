@@ -372,7 +372,7 @@ const App = () => {
                                                 <th>Stop Price</th>
                                                 <th>Risk</th>
                                                 <th>Mrkt Value</th>
-                                                <th>Close</th>
+                                                <th style={{ textAlign: 'center' }}>Close</th>
                                             </tr>
                                         </thead>
                                         <tbody>
@@ -397,7 +397,7 @@ const App = () => {
                                                     <td className="mono">{p.stop_loss > 0 ? fmtUSD(p.stop_loss) : '-'}</td>
                                                     <td className="mono">{p.risk_amount !== 0 ? fmtUSD(p.risk_amount) : '-'}</td>
                                                     <td className="mono">{fmtUSD(p.market_value)}</td>
-                                                    <td style={{ textAlign: 'right' }}>
+                                                    <td style={{ textAlign: 'center' }}>
                                                         <button className="btn-icon" onClick={() => closePosition(p.ticker)}>
                                                             <Trash2 size={14} />
                                                         </button>
@@ -465,12 +465,12 @@ const App = () => {
                                             <tr>
                                                 <th>Ticker</th>
                                                 <th>Daily %</th>
-                                                <th>Mode</th>
+                                                <th style={{ textAlign: 'center' }}>Mode</th>
                                                 <th>Price</th>
                                                 <th>Entry Alert</th>
                                                 <th>Stop Loss</th>
                                                 <th>Qty</th>
-                                                <th>Action</th>
+                                                <th style={{ textAlign: 'center' }}>Action</th>
                                             </tr>
                                         </thead>
                                         <tbody>
@@ -478,7 +478,7 @@ const App = () => {
                                                 <tr key={s.id}>
                                                     <td className="ticker-cell">{s.ticker}</td>
                                                     <td className={(prices[s.ticker]?.pct || s.daily_change_pct) >= 0 ? 'green' : 'red'}>{s.daily_change_pct || prices[s.ticker]?.pct ? fmtPct(prices[s.ticker]?.pct || s.daily_change_pct) : '-'}</td>
-                                                    <td>
+                                                    <td style={{ textAlign: 'center' }}>
                                                         <button
                                                             className={`btn-icon ${s.is_live ? 'blue' : 'orange'}`}
                                                             onClick={() => toggleStrategyLive(s.id, s.is_live)}
@@ -491,7 +491,7 @@ const App = () => {
                                                     <td className="mono">{fmtUSD(s.entry_price)}</td>
                                                     <td className="mono">{s.stop_loss ? fmtUSD(s.stop_loss) : '-'}</td>
                                                     <td>{s.quantity}</td>
-                                                    <td>
+                                                    <td style={{ textAlign: 'center' }}>
                                                         <button className="btn-icon" onClick={() => deleteStrategy(s.id)}><Trash2 size={14} /></button>
                                                     </td>
                                                 </tr>
@@ -517,7 +517,7 @@ const App = () => {
                                                 <th>SL Val</th>
                                                 <th>Status</th>
                                                 <th>Time</th>
-                                                <th>Cancel</th>
+                                                <th style={{ textAlign: 'center' }}>Cancel</th>
                                             </tr>
                                         </thead>
                                         <tbody>
@@ -542,7 +542,7 @@ const App = () => {
                                                         </td>
                                                         <td>{o.status}</td>
                                                         <td style={{ fontSize: '0.8rem' }}>{o.time}</td>
-                                                        <td>
+                                                        <td style={{ textAlign: 'center' }}>
                                                             {(o.status === 'Submitted' || o.status === 'PreSubmitted' || o.status === 'Simulated') ? (
                                                                 <button className="btn-icon" onClick={() => cancelOrder(o.id)}><Trash2 size={14} /></button>
                                                             ) : null}
