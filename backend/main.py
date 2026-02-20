@@ -290,34 +290,38 @@ async def lifespan(app: FastAPI):
     init_db()
     
     # LOAD PERSISTENT STRATEGIES
-    async with strategy_lock:
-        db = SessionLocal()
-        try:
-            # 1. Cleanup old strategies (End of Day logic)
-            today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-            deleted_count = db.query(StrategyModel).filter(StrategyModel.created_at < today_start).delete()
-            db.commit()
-            if deleted_count > 0:
-                logger.info(f"🧹 [PERSISTENCE] Cleaned up {deleted_count} expired strategies from previous days")
+    try:
+        async with strategy_lock:
+            db = SessionLocal()
+            try:
+                # 1. Cleanup old strategies (End of Day logic)
+                today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+                deleted_count = db.query(StrategyModel).filter(StrategyModel.created_at < today_start).delete()
+                db.commit()
+                if deleted_count > 0:
+                    logger.info(f"🧹 [PERSISTENCE] Cleaned up {deleted_count} expired strategies from previous days")
 
-            # 2. Load active/triggered strategies
-            db_strategies = db.query(StrategyModel).filter(StrategyModel.status.in_(["active", "triggered"])).all()
-            for ds in db_strategies:
-                s = Strategy(
-                    id=ds.id,
-                    ticker=ds.ticker,
-                    entry_price=ds.entry_price,
-                    stop_loss=ds.stop_loss,
-                    quantity=ds.quantity,
-                    status=ds.status,
-                    created_at=ds.created_at.isoformat()
-                )
-                strategies.append(s)
-                # Subscribe to market data for loaded strategies
-                await ib_service.subscribe_market_data(s.ticker)
-                logger.info(f"📋 [PERSISTENCE] Restored strategy: {s.ticker} [{s.id}]")
-        finally:
-            db.close()
+                # 2. Load active/triggered strategies
+                db_strategies = db.query(StrategyModel).filter(StrategyModel.status.in_(["active", "triggered"])).all()
+                for ds in db_strategies:
+                    s = Strategy(
+                        id=ds.id,
+                        ticker=ds.ticker,
+                        entry_price=ds.entry_price,
+                        stop_loss=ds.stop_loss,
+                        quantity=ds.quantity,
+                        status=ds.status,
+                        created_at=ds.created_at.isoformat()
+                    )
+                    strategies.append(s)
+                    # Subscribe to market data for loaded strategies
+                    await ib_service.subscribe_market_data(s.ticker)
+                    logger.info(f"📋 [PERSISTENCE] Restored strategy: {s.ticker} [{s.id}]")
+            finally:
+                db.close()
+    except Exception as e:
+        logger.error(f"⚠️ [PERSISTENCE] Failed to load strategies on startup: {e}")
+        logger.info("Proceeding with empty strategy list...")
     
     # Register Callbacks
     ib_service.price_callbacks = [] # Clear old ones if re-running
