@@ -371,6 +371,7 @@ const App = () => {
                                                 <th>Total $</th>
                                                 <th>Stop Price</th>
                                                 <th>Risk</th>
+                                                <th>Mrkt Value</th>
                                                 <th>Close</th>
                                             </tr>
                                         </thead>
@@ -395,6 +396,7 @@ const App = () => {
                                                     </td>
                                                     <td className="mono">{p.stop_loss > 0 ? fmtUSD(p.stop_loss) : '-'}</td>
                                                     <td className="mono">{p.risk_amount !== 0 ? fmtUSD(p.risk_amount) : '-'}</td>
+                                                    <td className="mono">{fmtUSD(p.market_value)}</td>
                                                     <td style={{ textAlign: 'right' }}>
                                                         <button className="btn-icon" onClick={() => closePosition(p.ticker)}>
                                                             <Trash2 size={14} />
