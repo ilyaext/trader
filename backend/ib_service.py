@@ -39,6 +39,7 @@ class IBIntegration:
         self.price_callbacks = []
         self.order_callbacks = [] 
         self.position_callbacks = []
+        self.bar_callbacks = []
         
         self.ib.pendingTickersEvent += self.on_pending_tickers
         self.ib.disconnectedEvent += self.on_disconnected
@@ -46,6 +47,7 @@ class IBIntegration:
         self.ib.orderStatusEvent += self.on_order_status
         self.ib.positionEvent += self.on_position_update
         self.ib.updatePortfolioEvent += self.on_update_portfolio
+        self.ib.barUpdateEvent += self.on_bar_update
         
         self.last_heartbeat = datetime.now() 
 
@@ -65,6 +67,12 @@ class IBIntegration:
         # Notify subscribers (WebSockets)
         for cb in self.order_callbacks:
             asyncio.create_task(cb(trade))
+
+    def on_bar_update(self, bars, hasNewBar):
+        """Callback for real-time bar updates from IBKR"""
+        # bars is a BarList, we usually care about the last completed bar
+        for cb in self.bar_callbacks:
+            asyncio.create_task(cb(bars, hasNewBar))
 
     def on_disconnected(self):
         logger.info("⛔ IBKR DISCONNECTED!")
@@ -166,6 +174,9 @@ class IBIntegration:
 
     def register_position_callback(self, cb):
         self.position_callbacks.append(cb)
+
+    def register_bar_callback(self, cb):
+        self.bar_callbacks.append(cb)
 
     def on_position_update(self, pos):
         """Event handler for real-time position updates from IBKR"""
@@ -526,7 +537,19 @@ class IBIntegration:
         
         self.ib.reqMarketDataType(self.market_data_type)
         self.ib.reqMktData(contract, '', False, False)
-        logger.info(f"Subscribed to {ticker_symbol}")
+        
+        # Subscribe to rolling 1-minute bars for strategy logic
+        # keepUpToDate=True provides real-time updates for the current bar
+        self.ib.reqHistoricalData(
+            contract, 
+            endDateTime='', 
+            durationStr='2 D', 
+            barSizeSetting='1 min', 
+            whatToShow='TRADES', 
+            useRTH=False, 
+            keepUpToDate=True
+        )
+        logger.info(f"Subscribed to market data and rolling 1-minute bars for {ticker_symbol}")
 
     def cancel_market_data(self, ticker_symbol):
         # Find the ticker object

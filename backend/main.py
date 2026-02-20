@@ -208,6 +208,21 @@ async def check_strategies(symbol, price, source="UNKNOWN"):
                     s.daily_change_pct = (price - ticker_obj.close) / ticker_obj.close * 100
                     break
 
+async def on_bar_update(bars, hasNewBar):
+    """Callback for 1-minute bar closes"""
+    if not hasNewBar:
+        return
+        
+    # Get the last completed bar (bars[-1] is the one that just closed)
+    last_bar = bars[-1]
+    symbol = bars.contract.symbol.upper()
+    close_price = last_bar.close
+    
+    logger.info(f"📊 [BAR CLOSED] {symbol} | Close: ${close_price:.2f} | Time: {last_bar.date}")
+    
+    # Run strategy logic ON BAR CLOSE
+    await check_strategies(symbol, close_price, source="BAR_CLOSE")
+
 async def on_price_update(ticker):
     """Callback for real-time price updates"""
     symbol = ticker.contract.symbol.upper()
@@ -238,7 +253,7 @@ async def on_price_update(ticker):
                     s.current_price = price
                     s.daily_change_pct = daily_change_pct
 
-        await check_strategies(symbol, price, source="LIVE_TICK")
+        # await check_strategies(symbol, price, source="LIVE_TICK") # REPLACED BY BAR UPDATES
 
 async def on_order_update(trade):
     """Callback for real-time order status changes"""
@@ -298,9 +313,11 @@ async def lifespan(app: FastAPI):
     ib_service.price_callbacks = [] # Clear old ones if re-running
     ib_service.order_callbacks = []
     ib_service.position_callbacks = []
+    ib_service.bar_callbacks = []
     ib_service.register_callback(on_price_update)
     ib_service.register_order_callback(on_order_update)
     ib_service.register_position_callback(on_position_update)
+    ib_service.register_bar_callback(on_bar_update)
     
     # Launch background connection and sync loop
     task = asyncio.create_task(check_connection_loop())
