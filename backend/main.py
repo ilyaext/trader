@@ -444,16 +444,25 @@ async def get_orders():
 @app.post("/order")
 async def place_order(req: dict):
     ticker = req['ticker'].strip().upper()
+    is_test = ticker == "TEST"
     try:
-        # 1. Check for existing positions
-        positions = ib_service.ib.positions()
-        if any(p.contract.symbol == ticker and p.position != 0 for p in positions):
-            raise HTTPException(status_code=400, detail=f"Existing position for {ticker} already found.")
+        # 1. Check for existing positions (Skip for TEST if not connected)
+        try:
+            positions = ib_service.ib.positions()
+            if any(p.contract.symbol == ticker and p.position != 0 for p in positions):
+                raise HTTPException(status_code=400, detail=f"Existing position for {ticker} already found.")
+        except Exception as e:
+            if not is_test:
+                raise HTTPException(status_code=400, detail=f"Could not check positions: {e}")
 
-        # 2. Check for existing open orders
-        open_trades = ib_service.ib.openTrades()
-        if any(t.contract.symbol == ticker for t in open_trades):
-            raise HTTPException(status_code=400, detail=f"Existing open order for {ticker} already found.")
+        # 2. Check for existing open orders (Skip for TEST if not connected)
+        try:
+            open_trades = ib_service.ib.openTrades()
+            if any(t.contract.symbol == ticker for t in open_trades):
+                raise HTTPException(status_code=400, detail=f"Existing open order for {ticker} already found.")
+        except Exception as e:
+            if not is_test:
+                raise HTTPException(status_code=400, detail=f"Could not check orders: {e}")
 
         # 3. Place order
         trade = await ib_service.place_order(
@@ -485,7 +494,7 @@ async def purge_order(order_id: int):
 async def close_position(ticker: str):
     ticker = ticker.strip().upper()
     try:
-        # 1. Close Position in IBKR
+        # 1. Close Position in IBKR (Bypasses connection check internally for TEST)
         await ib_service.close_position(ticker)
         
         # 2. Cleanup Associated Strategies (Active or Triggered)
@@ -528,10 +537,10 @@ async def create_strategy(req: StrategyRequest):
     ticker = req.ticker.strip().upper()
     
     async with strategy_lock:
-        # Prevent duplicate active strategies for the same ticker to avoid duplicate orders
+        # Prevent duplicate strategies for the same ticker to avoid duplicate orders/logs
         for s in strategies:
-            if s.ticker.upper() == ticker and s.status == "active":
-                raise HTTPException(status_code=400, detail=f"Active strategy for {ticker} already exists")
+            if s.ticker.upper() == ticker:
+                raise HTTPException(status_code=400, detail=f"A strategy for {ticker} already exists. Delete the existing one first.")
 
         s = Strategy(
             id=str(uuid.uuid4())[:8],

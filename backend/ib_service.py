@@ -50,6 +50,7 @@ class IBIntegration:
         self.ib.barUpdateEvent += self.on_bar_update
         
         self.last_heartbeat = datetime.now() 
+        self.test_trades = {} # Persistent storage for TEST ticker trades
 
     def on_error(self, reqId, errorCode, errorString, contract):
         """Handle IBKR API errors"""
@@ -294,7 +295,8 @@ class IBIntegration:
             raise e
 
     async def place_order(self, ticker_symbol, action, quantity, order_type="MARKET", limit_price=0.0, stop_loss_price=None):
-        if not self.check_connection:
+        is_test = ticker_symbol.upper() == "TEST"
+        if not is_test and not self.check_connection:
             raise Exception("IBKR not connected")
 
         # Intercept TEST ticker for simulated management
@@ -317,7 +319,12 @@ class IBIntegration:
             parent = MarketOrder(action, quantity)
         
         # Ensure we have an Order ID for the parent to link the child
-        parent.orderId = self.ib.client.getReqId()
+        if is_test:
+            # Use a large random ID for mock orders to avoid collisions with real ones
+            parent.orderId = random.randint(10000000, 99999999)
+        else:
+            parent.orderId = self.ib.client.getReqId()
+            
         orders_to_place = [parent]
         logger.info(f"DEBUG: [place_order] Parent ID: {parent.orderId} for {ticker_symbol}")
 
@@ -345,6 +352,7 @@ class IBIntegration:
                  status = OrderStatus(status='Filled', filled=o.totalQuantity, remaining=0, avgFillPrice=o.lmtPrice if (o.lmtPrice < 1e10) else 100.0)
                  t = Trade(contract, o, status, [], [])
                  self.ib.wrapper.trades[o.orderId] = t
+                 self.test_trades[o.orderId] = t # Persistent backup
              else:
                  t = self.ib.placeOrder(contract, o)
              trades.append(t)
@@ -368,14 +376,23 @@ class IBIntegration:
         """Cancels an active order by ID"""
         try:
             logger.debug(f"[cancel_order] Request for ID {order_id}")
-            if not self.check_connection:
+            # Identify if it's a TEST order first
+            is_test_order = False
+            all_trades = {**self.ib.wrapper.trades, **self.test_trades}
+            
+            for trade in all_trades.values():
+                if trade.order.orderId == order_id and trade.contract.symbol == "TEST":
+                    is_test_order = True
+                    break
+
+            if not is_test_order and not self.check_connection:
                 raise Exception("IBKR not connected")
                 
             order_id = int(order_id)
             
             # Check if it's a TEST order by looking it up in memory
             target_trade = None
-            for trade in self.ib.trades():
+            for trade in all_trades.values():
                 if trade.order.orderId == order_id:
                     target_trade = trade
                     break
@@ -428,8 +445,11 @@ class IBIntegration:
             return False
             
         # 2. Remove the parent FIRST to break cycles
-        del self.ib.wrapper.trades[raw_key]
-        logger.info(f"Force deleted Ghost Order {display_id} from wrapper.trades (Key: {raw_key})")
+        if raw_key in self.ib.wrapper.trades:
+            del self.ib.wrapper.trades[raw_key]
+        if raw_key in self.test_trades:
+            del self.test_trades[raw_key]
+        logger.info(f"Force deleted Ghost Order {display_id} from memory (Key: {raw_key})")
 
         # 3. Recursive cleanup for child orders (e.g. Stop Loss)
         child_keys = []
@@ -584,7 +604,8 @@ class IBIntegration:
         if is_test:
             logger.info(f"🧹 Purging ALL TEST mock orders for {ticker_symbol}")
             # Identify ALL TEST keys to delete
-            test_keys = [k for k, t in self.ib.wrapper.trades.items() if t.contract.symbol == "TEST"]
+            all_trades = {**self.ib.wrapper.trades, **self.test_trades}
+            test_keys = [k for k, t in all_trades.items() if t.contract.symbol == "TEST"]
             for k in test_keys:
                 self.force_delete_order(k)
         else:
@@ -657,158 +678,159 @@ class IBIntegration:
     # - [x] Fetch Active Stop Loss for Portfolio (Backend) <!-- id: 20 -->
     async def get_portfolio(self):
         """Returns the current portfolio items with detailed P&L (Asynchronous)"""
-        if not self.check_connection:
-            return []
-            
         portfolio_items = []
-        for item in self.ib.portfolio():
-            # Find the contract ticker to get Previous Close and Live Price
-            ticker = None
-            # Find existing ticker using conId
-            for t in self.ib.tickers():
-                if t.contract.conId == item.contract.conId:
-                    ticker = t
-                    break
-            
-            # If not found, subscribe (STREAMING)
-            # We switched back from Snapshot Polling to Streaming because Snapshot spamming might be throttling 
-            # or ineffective in sync loops.
-            # CRITICAL FIX: Ensure exchange='SMART' is used for the subscription to avoid Error 321.
-            # BYPASS: Do not request market data for TEST ticker
-            if not ticker and item.contract.symbol != "TEST":
-                 contract_for_sub = item.contract
-                 contract_for_sub.exchange = 'SMART'
-                 
-                 logger.info(f"Auto-subscribing to STREAM for {contract_for_sub.symbol} (ID: {contract_for_sub.conId})")
-                 
-                 self.ib.reqMarketDataType(self.market_data_type)
-                 # snapshot=False (Streaming)
-                 ticker = self.ib.reqMktData(contract_for_sub, '', False, False)
-            
-            # Double check lookup (if we just subscribed, reqMktData returns the ticker)
-            # If we had it, we have it.
-            
-            if not ticker:
-                 # Fallback by symbol
-                 for t in self.ib.tickers():
-                    if t.contract.symbol == item.contract.symbol:
+        
+        if self.check_connection:
+            for item in self.ib.portfolio():
+                # Find the contract ticker to get Previous Close and Live Price
+                ticker = None
+                # Find existing ticker using conId
+                for t in self.ib.tickers():
+                    if t.contract.conId == item.contract.conId:
                         ticker = t
                         break
-            
-            # DETERMINE PRICE
-            # Use Ticker's calculated market price (robust fallback) if available, otherwise item.marketPrice
-            current_price = item.marketPrice
-            
-            if item.contract.symbol == "TEST":
-                current_price = 100.0
-            elif ticker:
-                # Use our robust price logic 
-                # CHANGE: Prioritize LAST price (matches TradingView/Brokers) over Midpoint (marketPrice)
                 
-                # 1. Last Traded Price (Primary)
-                if ticker.last and ticker.last > 0 and ticker.last == ticker.last: # Check Valid and not NaN
-                     current_price = ticker.last
+                # If not found, subscribe (STREAMING)
+                # We switched back from Snapshot Polling to Streaming because Snapshot spamming might be throttling 
+                # or ineffective in sync loops.
+                # CRITICAL FIX: Ensure exchange='SMART' is used for the subscription to avoid Error 321.
+                # BYPASS: Do not request market data for TEST ticker
+                if not ticker and item.contract.symbol != "TEST":
+                     contract_for_sub = item.contract
+                     contract_for_sub.exchange = 'SMART'
+                     
+                     logger.info(f"Auto-subscribing to STREAM for {contract_for_sub.symbol} (ID: {contract_for_sub.conId})")
+                     
+                     self.ib.reqMarketDataType(self.market_data_type)
+                     # snapshot=False (Streaming)
+                     ticker = self.ib.reqMktData(contract_for_sub, '', False, False)
                 
-                # 2. Market Price (Midpoint fallback if Last is missing)
-                elif ticker.marketPrice() and ticker.marketPrice() > 0:
-                     current_price = ticker.marketPrice()
+                # Double check lookup (if we just subscribed, reqMktData returns the ticker)
+                # If we had it, we have it.
                 
-                # 3. Close Price (Previous day close fallback) 
-                elif ticker.close and ticker.close > 0:
-                     current_price = ticker.close
-            
-            # Use "Live" or "Delayed" data instead of "Frozen" (4) which is static
-            # 3 = Delayed (High Volume), 1 = Live
-            # Set to 3 (Delayed) if currently 4 (Frozen) to encourage updates if market is open/simulated
-            # But only call this once globally usually, but here we enforce it for these tickers.
-            # self.ib.reqMarketDataType(3) 
+                if not ticker:
+                     # Fallback by symbol
+                     for t in self.ib.tickers():
+                        if t.contract.symbol == item.contract.symbol:
+                            ticker = t
+                            break
+                
+                # DETERMINE PRICE
+                # Use Ticker's calculated market price (robust fallback) if available, otherwise item.marketPrice
+                current_price = item.marketPrice
+                
+                if item.contract.symbol == "TEST":
+                    current_price = 100.0
+                elif ticker:
+                    # Use our robust price logic 
+                    # CHANGE: Prioritize LAST price (matches TradingView/Brokers) over Midpoint (marketPrice)
+                    
+                    # 1. Last Traded Price (Primary)
+                    if ticker.last and ticker.last > 0 and ticker.last == ticker.last: # Check Valid and not NaN
+                         current_price = ticker.last
+                    
+                    # 2. Market Price (Midpoint fallback if Last is missing)
+                    elif ticker.marketPrice() and ticker.marketPrice() > 0:
+                         current_price = ticker.marketPrice()
+                    
+                    # 3. Close Price (Previous day close fallback) 
+                    elif ticker.close and ticker.close > 0:
+                         current_price = ticker.close
+                
+                # Use "Live" or "Delayed" data instead of "Frozen" (4) which is static
+                # 3 = Delayed (High Volume), 1 = Live
+                # Set to 3 (Delayed) if currently 4 (Frozen) to encourage updates if market is open/simulated
+                # But only call this once globally usually, but here we enforce it for these tickers.
+                # self.ib.reqMarketDataType(3) 
 
-            # Find Active Stop Loss (Move Up)
-            stop_loss_price = 0.0
-            for t in self.ib.openTrades(): 
-                if t.contract.conId == item.contract.conId:
-                    o = t.order
-                    position_direction = 1 if item.position > 0 else -1
-                    order_direction = -1 if o.action == 'SELL' else 1
-                    if position_direction != order_direction and o.orderType in ['STP', 'TRAIL', 'STP LMT']:
-                             stop_loss_price = o.auxPrice
-            
-            # Find Last Fill Date (Move Up)
-            last_fill_date = None
-            relevant_fills = [f for f in self.ib.fills() if f.contract.conId == item.contract.conId]
-            if relevant_fills:
-                relevant_fills.sort(key=lambda x: x.time, reverse=True)
-                last_fill_date = relevant_fills[0].time
+                # Find Active Stop Loss (Move Up)
+                stop_loss_price = 0.0
+                for t in self.ib.openTrades(): 
+                    if t.contract.conId == item.contract.conId:
+                        o = t.order
+                        position_direction = 1 if item.position > 0 else -1
+                        order_direction = -1 if o.action == 'SELL' else 1
+                        if position_direction != order_direction and o.orderType in ['STP', 'TRAIL', 'STP LMT']:
+                                 stop_loss_price = o.auxPrice
+                
+                # Find Last Fill Date (Move Up)
+                last_fill_date = None
+                relevant_fills = [f for f in self.ib.fills() if f.contract.conId == item.contract.conId]
+                if relevant_fills:
+                    relevant_fills.sort(key=lambda x: x.time, reverse=True)
+                    last_fill_date = relevant_fills[0].time
 
-            # Calculate Today's P&L
-            # Logic: If bought TODAY, Today's P/L = (Price - AvgCost) [Same as Unrealized]
-            #        If bought BEFORE, Today's P/L = (Price - PrevClose)
-            today_pnl = 0.0
-            today_pnl_pct = 0.0
-            
-            # Determine Baseline Price
-            baseline_price = 0.0
-            
-            is_new_position = False
-            if last_fill_date:
-                # Compare fill date with today's date
-                # relevant_fills[0].time is typically a datetime object (localized?)
-                # We need to be careful with timezones, but date() comparison usually works if both are reasonably aligned.
-                try:
-                    fill_date = last_fill_date.date()
-                    today_date = datetime.now().date()
-                    if fill_date == today_date:
-                        is_new_position = True
-                except:
-                    pass
+                # Calculate Today's P&L
+                # Logic: If bought TODAY, Today's P/L = (Price - AvgCost) [Same as Unrealized]
+                #        If bought BEFORE, Today's P/L = (Price - PrevClose)
+                today_pnl = 0.0
+                today_pnl_pct = 0.0
+                
+                # Determine Baseline Price
+                baseline_price = 0.0
+                
+                is_new_position = False
+                if last_fill_date:
+                    # Compare fill date with today's date
+                    # relevant_fills[0].time is typically a datetime object (localized?)
+                    # We need to be careful with timezones, but date() comparison usually works if both are reasonably aligned.
+                    try:
+                        fill_date = last_fill_date.date()
+                        today_date = datetime.now().date()
+                        if fill_date == today_date:
+                            is_new_position = True
+                    except:
+                        pass
 
-            if is_new_position:
-                # If new, baseline is the cost of the position
-                baseline_price = item.averageCost
-            else:
-                # If old, baseline is yesterday's close
+                if is_new_position:
+                    # If new, baseline is the cost of the position
+                    baseline_price = item.averageCost
+                else:
+                    # If old, baseline is yesterday's close
+                    if ticker and ticker.close:
+                        baseline_price = ticker.close
+                
+                # Calculate Personal Today's P/L $
+                if baseline_price > 0 and current_price > 0:
+                     today_pnl = (current_price - baseline_price) * item.position
+                     
+                # Calculate Market Daily Change % (User requested this to be independent of order)
+                # Always (Current - PrevClose) / PrevClose
+                # We need a robust "Previous Close" separately from baseline logic
+                prev_close_for_pct = 0.0
                 if ticker and ticker.close:
-                    baseline_price = ticker.close
-            
-            # Calculate Personal Today's P/L $
-            if baseline_price > 0 and current_price > 0:
-                 today_pnl = (current_price - baseline_price) * item.position
+                     prev_close_for_pct = ticker.close
+                
+                if prev_close_for_pct > 0 and current_price > 0:
+                    today_pnl_pct = (current_price - prev_close_for_pct) / prev_close_for_pct * 100
                  
-            # Calculate Market Daily Change % (User requested this to be independent of order)
-            # Always (Current - PrevClose) / PrevClose
-            # We need a robust "Previous Close" separately from baseline logic
-            prev_close_for_pct = 0.0
-            if ticker and ticker.close:
-                 prev_close_for_pct = ticker.close
-            
-            if prev_close_for_pct > 0 and current_price > 0:
-                today_pnl_pct = (current_price - prev_close_for_pct) / prev_close_for_pct * 100
-             
-            # Recalculate Unrealized P&L based on new Current Price
-            # IBKR's item.unrealizedPNL might be stale if item.marketPrice is stale
-            unrealized_pnl = item.unrealizedPNL
-            unrealized_pnl_pct = 0.0
-            if current_price > 0 and item.averageCost > 0:
-                 unrealized_pnl = (current_price - item.averageCost) * item.position
-                 unrealized_pnl_pct = (current_price - item.averageCost) / item.averageCost * 100
-            
-            portfolio_items.append({
-                "ticker": item.contract.symbol,
-                "quantity": item.position,
-                "avg_cost": item.averageCost,
-                "market_price": current_price,
-                "market_value": current_price * item.position, # Recalc market value
-                "unrealized_pnl": unrealized_pnl,
-                "unrealized_pnl_pct": unrealized_pnl_pct,
-                "realized_pnl": item.realizedPNL,
-                "today_pnl": today_pnl,
-                "today_pnl_pct": today_pnl_pct,
-                "stop_loss": stop_loss_price,
-                "last_fill_date": last_fill_date, # New field
-                "account": item.account
-            })
+                # Recalculate Unrealized P&L based on new Current Price
+                # IBKR's item.unrealizedPNL might be stale if item.marketPrice is stale
+                unrealized_pnl = item.unrealizedPNL
+                unrealized_pnl_pct = 0.0
+                if current_price > 0 and item.averageCost > 0:
+                     unrealized_pnl = (current_price - item.averageCost) * item.position
+                     unrealized_pnl_pct = (current_price - item.averageCost) / item.averageCost * 100
+                
+                portfolio_items.append({
+                    "ticker": item.contract.symbol,
+                    "quantity": item.position,
+                    "avg_cost": item.averageCost,
+                    "market_price": current_price,
+                    "market_value": current_price * item.position, # Recalc market value
+                    "unrealized_pnl": unrealized_pnl,
+                    "unrealized_pnl_pct": unrealized_pnl_pct,
+                    "realized_pnl": item.realizedPNL,
+                    "today_pnl": today_pnl,
+                    "today_pnl_pct": today_pnl_pct,
+                    "stop_loss": stop_loss_price,
+                    "last_fill_date": last_fill_date, # New field
+                    "account": item.account
+                })
         # --- Add MOCK TEST position if a simulated trade exists ---
-        test_fills = [t for k, t in self.ib.wrapper.trades.items() 
+        # Look in BOTH wrapper.trades and our persistent test_trades backup
+        all_trades = {**self.ib.wrapper.trades, **self.test_trades}
+        test_fills = [t for k, t in all_trades.items() 
                      if t.contract.symbol == "TEST" and t.order.action == "BUY" and t.orderStatus.status == "Filled"]
         
         if test_fills:
@@ -847,12 +869,20 @@ class IBIntegration:
 
     async def get_today_orders(self):
         """Returns all orders (active and executed) for the current session (Asynchronous)"""
-        if not self.check_connection:
-            return []
-            
         orders_data = []
-        # ib.trades() returns a list of Trade objects for the current session
-        for trade in self.ib.trades():
+        # ib.trades() returns mock trades even when disconnected if we put them in wrapper.trades
+        # Merging with test_trades backup for persistent visibility
+        all_trades = []
+        if self.check_connection:
+            all_trades = list(self.ib.trades())
+            
+        # Add items from test_trades that might have been cleared from wrapper or if disconnected
+        wrapper_ids = {t.order.orderId for t in all_trades}
+        for tid, t in self.test_trades.items():
+            if t.order.orderId not in wrapper_ids:
+                all_trades.append(t)
+
+        for trade in all_trades:
             # Format for frontend
             # Determine "Price" to display (Filled Price vs Current Price)
             # Determine "Price" to display (Filled Price vs Current Price)
