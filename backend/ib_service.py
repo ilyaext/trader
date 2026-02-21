@@ -547,7 +547,7 @@ class IBIntegration:
             durationStr='2 D', 
             barSizeSetting='1 min', 
             whatToShow='TRADES', 
-            useRTH=False, 
+            useRTH=True, 
             keepUpToDate=True
         )
         logger.info(f"Subscribed to market data and rolling 1-minute bars for {ticker_symbol}")

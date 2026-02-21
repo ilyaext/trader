@@ -241,6 +241,13 @@ async def on_price_update(ticker):
     if symbol == "TEST":
         return
 
+    # Native IBKR Market Hours Check:
+    # marketDataType 1 = Live, 2 = Frozen, 3 = Delayed, 4 = Frozen Delayed
+    # We ONLY process Live data (1). If it's Frozen or Delayed, we skip.
+    # Note: This requires a live market data subscription in IBKR.
+    if ticker.marketDataType != 1:
+        return
+
     price = ticker.marketPrice() or ticker.last or ticker.close
     if price and price > 0:
         # Calculate Daily %
